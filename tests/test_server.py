@@ -278,7 +278,7 @@ def test_concurrent_requests_do_not_enter_engine_in_parallel(monkeypatch):
     assert r1.status_code == 200 and r2.status_code == 200
     assert peak < 2, (
         f"two requests entered the engine concurrently (peak={peak}); "
-        "GPU calls must be serialised to avoid the MPS crash in issue #9"
+        "GPU calls must be serialised to avoid the MPS crash"
     )
 
 

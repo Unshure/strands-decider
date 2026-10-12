@@ -7,6 +7,9 @@ drift in field names or types would break that without failing any model test.
 
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -229,15 +232,7 @@ def test_real_create_app_routes_work(monkeypatch):
 
 
 def test_concurrent_requests_do_not_enter_engine_in_parallel(monkeypatch):
-    """Issue #9: on MPS, two overlapping requests crash the server because
-    FastAPI dispatches sync handlers on a threadpool and the engine has no lock,
-    so two threads can touch the GPU at once. The test uses a stub engine that
-    records how many threads are inside evaluate() simultaneously; if the server
-    serialises engine calls the peak is 1, otherwise it is >= 2.
-    """
-    import threading
-    from concurrent.futures import ThreadPoolExecutor
-
+    """Tests concurrent requests."""
     enter = threading.Event()
     release = threading.Event()
     inside = 0

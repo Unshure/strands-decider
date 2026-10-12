@@ -24,7 +24,8 @@ The container runs `python -m strands_decider.sagemaker_app`
 - Credentials that can push to ECR, and use SageMaker and `iam:PassRole` on the execution role.
 - A SageMaker execution role. The image is in ECR, so the role needs
   `AmazonSageMakerFullAccess` or at least ECR pull and CloudWatch Logs.
-- Quota for one `ml.g6.xlarge for endpoint usage` in the region (Service Quotas, SageMaker).
+- Quota for one `ml.g6.xlarge for endpoint usage` in the region (Service Quotas, SageMaker),
+  or for the type you pass to `--instance-type`.
 
 ## 1. Image
 
@@ -44,6 +45,16 @@ The weights are in the image: the checkpoint at `/opt/models/<repo id>`, and the
 checkpoint records. The container sets `HF_HUB_OFFLINE=1`, so the endpoint does not need
 internet access and works in a VPC without a NAT gateway.
 
+For a CPU instance, build with `DEVICE=cpu`. That image leaves out flash-linear-attention,
+whose Triton kernels need a GPU, and the container runs with `--device cpu`. On CPU the
+engine casts the torso to float32 (about 9 GB), so pick an instance with 16 GB or more, such
+as `ml.m5.2xlarge` (32 GB):
+
+```bash
+DEVICE=cpu TAG=cpu deploy/sagemaker/build_and_push.sh
+python deploy/sagemaker/deploy.py create --instance-type ml.m5.2xlarge --image <URI> --role <ARN>
+```
+
 On an Apple-silicon Mac the build runs under emulation and is slow. A Linux x86 host, or
 AWS CodeBuild, builds it faster.
 
@@ -60,6 +71,11 @@ This creates a model, an endpoint config and an endpoint, all named
 `InService`. `--instance-type`, `--instance-count`,
 `--max-batch` and `--strict-window` set what their names say. Container logs are in
 CloudWatch Logs under `/aws/sagemaker/Endpoints/<name>`.
+
+A quota does not reserve capacity. If the endpoint fails with `InsufficientInstanceCapacity`,
+SageMaker found no free instance of that type in the region; no instance ran and nothing
+was billed. Delete it (step 4) and try another instance type or region, or try again later.
+An endpoint that fails this way can stay in `Creating` for 30 minutes or more first.
 
 ## 3. Ask it
 

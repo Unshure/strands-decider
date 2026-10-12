@@ -5,7 +5,8 @@
 #   REGION=us-east-1 TAG=v1-2610 deploy/sagemaker/build_and_push.sh
 #
 # REGION (default: the CLI's region, else us-west-2), REPO (default: strands-decider-sagemaker),
-# TAG (default: latest), CHECKPOINT and CHECKPOINT_REVISION (passed to the Dockerfile).
+# TAG (default: latest), DEVICE (cuda or cpu, default cuda), CHECKPOINT and CHECKPOINT_REVISION
+# (passed to the Dockerfile).
 # Prints the image URI on the last line.
 set -euo pipefail
 
@@ -16,6 +17,7 @@ REPO="${REPO:-strands-decider-sagemaker}"
 TAG="${TAG:-latest}"
 CHECKPOINT="${CHECKPOINT:-StrandsAgents/strands-decider-2B-qwen3.5-v1-2610}"
 CHECKPOINT_REVISION="${CHECKPOINT_REVISION:-main}"
+DEVICE="${DEVICE:-cuda}"
 
 ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
 REGISTRY="${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com"
@@ -32,6 +34,7 @@ docker buildx build --platform linux/amd64 \
   -f "$ROOT/deploy/sagemaker/Dockerfile" \
   --build-arg CHECKPOINT="$CHECKPOINT" \
   --build-arg CHECKPOINT_REVISION="$CHECKPOINT_REVISION" \
+  --build-arg DEVICE="$DEVICE" \
   -t "$IMAGE" --push "$ROOT"
 
 echo "$IMAGE"

@@ -1,0 +1,112 @@
+# Serving on Amazon SageMaker
+
+These files put a strands-decider checkpoint on a SageMaker real-time endpoint. The default
+is `StrandsAgents/strands-decider-2B-qwen3.5-v1-2610` on one `ml.g6.xlarge` (one NVIDIA L4).
+The endpoint takes the same request body as `POST /v1/systemone`
+([docs/inference.md, Serve](../../docs/inference.md#serve)) and returns the same response.
+
+| File | Contents |
+| --- | --- |
+| `Dockerfile` | The CUDA image: the package with the `cuda` extra, and the checkpoint and its base model inside it |
+| `Dockerfile.dockerignore` | What the build copies from the repository |
+| `prefetch.py` | Downloads the checkpoint and its base model at build time |
+| `build_and_push.sh` | Builds the image and pushes it to ECR |
+| `deploy.py` | Creates, calls and deletes the endpoint (boto3) |
+
+The container runs `python -m strands_decider.sagemaker_app`
+([`sagemaker_app.py`](../../src/strands_decider/sagemaker_app.py)). It serves the app from
+`strands-decider serve` on port 8080. It adds the two paths that SageMaker calls:
+`GET /ping`, which is `/health`, and `POST /invocations`, which is `/v1/systemone`.
+
+## What you need
+
+- Docker with BuildKit (`docker buildx`), the AWS CLI v2, and `pip install boto3`.
+- Credentials that can push to ECR, and use SageMaker and `iam:PassRole` on the execution role.
+- A SageMaker execution role. The image is in ECR, so the role needs
+  `AmazonSageMakerFullAccess` or at least ECR pull and CloudWatch Logs.
+- Quota for one `ml.g6.xlarge for endpoint usage` in the region (Service Quotas, SageMaker).
+
+## 1. Image
+
+```bash
+deploy/sagemaker/build_and_push.sh
+```
+
+The script creates the ECR repository `strands-decider-sagemaker` if it is not there,
+builds `deploy/sagemaker/Dockerfile` for `linux/amd64` from the repository root, and pushes
+it. The last line it prints is the image URI. Set `REGION`, `REPO` or `TAG` to change
+where the image goes. To serve another checkpoint, set `CHECKPOINT` to its Hub id. To pin
+a release, set `CHECKPOINT_REVISION` to its date tag (`YYMMDD`,
+[docs/inference.md, Model artifact](../../docs/inference.md#model-artifact)).
+
+The weights are in the image: the checkpoint at `/opt/models/<repo id>`, and the base model
+(`Qwen/Qwen3.5-2B-Base`, about 4.5 GB) in the Hugging Face cache at the revision the
+checkpoint records. The container sets `HF_HUB_OFFLINE=1`, so the endpoint does not need
+internet access and works in a VPC without a NAT gateway.
+
+On an Apple-silicon Mac the build runs under emulation and is slow. A Linux x86 host, or
+AWS CodeBuild, builds it faster.
+
+## 2. Endpoint
+
+```bash
+python deploy/sagemaker/deploy.py create \
+  --image <image URI from step 1> \
+  --role arn:aws:iam::<account>:role/<SageMaker execution role>
+```
+
+This creates a model, an endpoint config and an endpoint, all named
+`strands-decider-2b-qwen35-v1` (`--name` changes this). Then it waits until the endpoint is
+`InService`. `--instance-type`, `--instance-count`,
+`--max-batch` and `--strict-window` set what their names say. Container logs are in
+CloudWatch Logs under `/aws/sagemaker/Endpoints/<name>`.
+
+## 3. Ask it
+
+```bash
+python deploy/sagemaker/deploy.py invoke \
+  --state "Help! My payouts have been failing for 3 days!" \
+  --noul "Does this convey urgency?" \
+  --choice "Which team should handle this?=billing,sales,retail" \
+  --score "How frustrated is the writer?=calm,frustrated,depressed"
+```
+
+From your own code, send the `/v1/systemone` body with `ContentType="application/json"`:
+
+```python
+import json, boto3
+
+runtime = boto3.client("sagemaker-runtime")
+response = runtime.invoke_endpoint(
+    EndpointName="strands-decider-2b-qwen35-v1",
+    ContentType="application/json",
+    Body=json.dumps({
+        "state": "Help! My payouts have been failing for 3 days!",
+        "questions": {"is_urgent": {"type": "noul", "instructions": "Does this convey urgency?"}},
+    }),
+)
+print(json.loads(response["Body"].read())["answers"])
+```
+
+## 4. Delete it
+
+An endpoint costs money for every hour it runs, whether or not it gets requests. When you
+no longer need it:
+
+```bash
+python deploy/sagemaker/deploy.py delete
+```
+
+This deletes the endpoint, the endpoint config and the model. The image stays in ECR.
+
+## Notes
+
+- The endpoint is private: callers need IAM permission `sagemaker:InvokeEndpoint`. The
+  container itself has no authentication, as with `strands-decider serve`.
+- The container runs one uvicorn worker, and one instance runs one model. The server's
+  behaviour under concurrent requests is not verified
+  ([docs/inference.md, Serve](../../docs/inference.md#serve)). For more throughput, add
+  instances (`--instance-count`, or auto scaling).
+- The image does not include `causal-conv1d`, which compiles against the CUDA toolkit
+  ([docs/inference.md](../../docs/inference.md#environments-for-serving)). Transformers uses
+  its PyTorch path for that layer instead, which is slower.

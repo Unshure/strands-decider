@@ -8,6 +8,7 @@ Compatibility with the Jev API itself is not verified.
 from __future__ import annotations
 
 import os
+import threading
 import time
 
 from fastapi import FastAPI, HTTPException
@@ -18,6 +19,11 @@ from .modeling import StrandsDeciderModel
 from .schema import SystemOneRequest, SystemOneResponse
 
 _engine: SystemOneEngine | None = None
+# One engine call at a time. FastAPI dispatches sync handlers on a threadpool, so
+# without this two overlapping requests touch the same GPU and crash MPS with a
+# Metal command-buffer assertion (issue #9). Serialising here is cheap: the engine
+# already saturates the device within a single request.
+_engine_lock = threading.Lock()
 
 
 def get_engine() -> SystemOneEngine:
@@ -87,7 +93,8 @@ def create_app(
         eng = get_engine()
         started = time.perf_counter()
         try:
-            response = eng.evaluate(request)
+            with _engine_lock:
+                response = eng.evaluate(request)
         except ValueError as exc:
             # Option count over num_slots, malformed permutation, etc. -- caller error.
             raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -7,3 +7,4 @@
 !src/
 !deploy/sagemaker/prefetch.py
 **/__pycache__
+**/*.egg-info

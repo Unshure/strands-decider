@@ -12,6 +12,7 @@ The endpoint takes the same request body as `POST /v1/systemone`
 | `prefetch.py` | Downloads the checkpoint and its base model at build time |
 | `build_and_push.sh` | Builds the image and pushes it to ECR |
 | `deploy.py` | Creates, calls and deletes the endpoint (boto3) |
+| `cdk/` | The same endpoint as a CDK stack ([cdk/README.md](cdk/README.md)) |
 
 The container runs `strands-decider serve` on port 8080. Besides `/health` and
 `/v1/systemone`, the server answers the two paths that SageMaker calls: `GET /ping`, which

@@ -1,0 +1,11 @@
+{
+  "app": "python3 app.py",
+  "context": {
+    "stack_name": "StrandsDeciderEndpoint",
+    "name": "strands-decider",
+    "device": "cuda",
+    "instance_type": "ml.g6.xlarge",
+    "instance_count": 1,
+    "serve_args": ""
+  }
+}

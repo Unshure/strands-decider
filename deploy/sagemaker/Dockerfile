@@ -28,9 +28,13 @@ COPY deploy/sagemaker/prefetch.py ./
 # The folder keeps the repo id, so responses name the model by its basename (server.create_app).
 RUN python prefetch.py "${CHECKPOINT}" "${CHECKPOINT_REVISION}" "/opt/models/${CHECKPOINT}"
 
+# DECIDER_ARGS adds `strands-decider serve` options, such as "--max-batch 8 --strict-window";
+# a SageMaker model's Environment can set it.
 ENV DECIDER_CHECKPOINT=/opt/models/${CHECKPOINT} \
     DECIDER_DEVICE=${DEVICE} \
+    DECIDER_ARGS="" \
     HF_HUB_OFFLINE=1
 
 EXPOSE 8080
-ENTRYPOINT ["python", "-m", "strands_decider.sagemaker_app"]
+# SageMaker runs `docker run IMAGE serve`; that trailing `serve` becomes $0 and is ignored.
+ENTRYPOINT ["sh", "-c", "exec strands-decider serve \"$DECIDER_CHECKPOINT\" --host 0.0.0.0 --port 8080 --device \"$DECIDER_DEVICE\" $DECIDER_ARGS"]

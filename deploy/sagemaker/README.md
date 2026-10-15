@@ -13,10 +13,9 @@ The endpoint takes the same request body as `POST /v1/systemone`
 | `build_and_push.sh` | Builds the image and pushes it to ECR |
 | `deploy.py` | Creates, calls and deletes the endpoint (boto3) |
 
-The container runs `python -m strands_decider.sagemaker_app`
-([`sagemaker_app.py`](../../src/strands_decider/sagemaker_app.py)). It serves the app from
-`strands-decider serve` on port 8080. It adds the two paths that SageMaker calls:
-`GET /ping`, which is `/health`, and `POST /invocations`, which is `/v1/systemone`.
+The container runs `strands-decider serve` on port 8080. Besides `/health` and
+`/v1/systemone`, the server answers the two paths that SageMaker calls: `GET /ping`, which
+is `/health`, and `POST /invocations`, which is `/v1/systemone`.
 
 ## What you need
 
@@ -36,8 +35,8 @@ deploy/sagemaker/build_and_push.sh
 The script creates the ECR repository `strands-decider-sagemaker` if it is not there,
 builds `deploy/sagemaker/Dockerfile` for `linux/amd64` from the repository root, and pushes
 it. The last line it prints is the image URI. Set `REGION`, `REPO` or `TAG` to change
-where the image goes. To serve another checkpoint, set `CHECKPOINT` to its Hub id. To pin
-a release, set `CHECKPOINT_REVISION` to its date tag (`YYMMDD`,
+where the image goes. To serve another checkpoint, change `CHECKPOINT` in the Dockerfile to
+its Hub id. To pin a release, change `CHECKPOINT_REVISION` to its date tag (`YYMMDD`,
 [docs/inference.md, Model artifact](../../docs/inference.md#model-artifact)).
 
 The weights are in the image: the checkpoint at `/opt/models/<repo id>`, and the base model
@@ -68,9 +67,10 @@ python deploy/sagemaker/deploy.py create \
 
 This creates a model, an endpoint config and an endpoint, all named
 `strands-decider-2b-qwen35-v1` (`--name` changes this). Then it waits until the endpoint is
-`InService`. `--instance-type`, `--instance-count`,
-`--max-batch` and `--strict-window` set what their names say. Container logs are in
-CloudWatch Logs under `/aws/sagemaker/Endpoints/<name>`.
+`InService`. `--instance-type` and `--instance-count` set what their names say.
+`--serve-args` passes more options to `strands-decider serve`, for example
+`--serve-args "--max-batch 8 --strict-window"`. Container logs are in CloudWatch Logs under
+`/aws/sagemaker/Endpoints/<name>`.
 
 A quota does not reserve capacity. If the endpoint fails with `InsufficientInstanceCapacity`,
 SageMaker found no free instance of that type in the region; no instance ran and nothing
@@ -79,12 +79,14 @@ An endpoint that fails this way can stay in `Creating` for 30 minutes or more fi
 
 ## 3. Ask it
 
+`deploy.py invoke` sends a `/v1/systemone` request body, from a file or from stdin, and
+prints the response:
+
 ```bash
-python deploy/sagemaker/deploy.py invoke \
-  --state "Help! My payouts have been failing for 3 days!" \
-  --noul "Does this convey urgency?" \
-  --choice "Which team should handle this?=billing,sales,retail" \
-  --score "How frustrated is the writer?=calm,frustrated,depressed"
+echo '{
+  "state": "Help! My payouts have been failing for 3 days!",
+  "questions": {"is_urgent": {"type": "noul", "instructions": "Does this convey urgency?"}}
+}' | python deploy/sagemaker/deploy.py invoke
 ```
 
 From your own code, send the `/v1/systemone` body with `ContentType="application/json"`:

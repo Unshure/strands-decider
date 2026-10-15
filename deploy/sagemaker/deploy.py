@@ -1,7 +1,7 @@
 """Create, call and delete a SageMaker real-time endpoint for strands-decider (README.md).
 
     python deploy/sagemaker/deploy.py create --image IMAGE_URI --role ROLE_ARN
-    python deploy/sagemaker/deploy.py invoke --state "..." --noul "Does this convey urgency?"
+    python deploy/sagemaker/deploy.py invoke request.json      # or the body on stdin
     python deploy/sagemaker/deploy.py delete
 
 Needs boto3 (`pip install boto3`) and credentials that can use SageMaker; `create` also
@@ -12,7 +12,6 @@ the endpoint all take the name in --name.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 
 import boto3
@@ -22,13 +21,10 @@ DEFAULT_INSTANCE = "ml.g6.xlarge"
 
 
 def create(sm, args: argparse.Namespace) -> None:
-    env = {"DECIDER_MAX_BATCH": str(args.max_batch)}
-    if args.strict_window:
-        env["DECIDER_STRICT_WINDOW"] = "true"
     sm.create_model(
         ModelName=args.name,
         ExecutionRoleArn=args.role,
-        PrimaryContainer={"Image": args.image, "Environment": env},
+        PrimaryContainer={"Image": args.image, "Environment": {"DECIDER_ARGS": args.serve_args}},
     )
     sm.create_endpoint_config(
         EndpointConfigName=args.name,
@@ -55,34 +51,10 @@ def create(sm, args: argparse.Namespace) -> None:
 
 
 def invoke(runtime, args: argparse.Namespace) -> None:
-    questions: dict[str, dict] = {}
-    for i, text in enumerate(args.noul):
-        questions[f"noul_{i}"] = {"type": "noul", "instructions": text}
-    for kind, specs in (("choice", args.choice), ("score", args.score)):
-        for i, spec in enumerate(specs):
-            text, _, options = spec.partition("=")
-            criteria = [o.strip() for o in options.split(",") if o.strip()]
-            if kind == "choice":
-                questions[f"choice_{i}"] = {
-                    "type": "choice",
-                    "instructions": text,
-                    "criteria": {o: None for o in criteria},
-                }
-            else:
-                questions[f"score_{i}"] = {
-                    "type": "score",
-                    "instructions": text,
-                    "criteria": criteria,
-                }
-    if not questions:
-        sys.exit("give at least one --noul, --choice or --score")
     response = runtime.invoke_endpoint(
-        EndpointName=args.name,
-        ContentType="application/json",
-        Accept="application/json",
-        Body=json.dumps({"state": args.state, "questions": questions}),
+        EndpointName=args.name, ContentType="application/json", Body=args.body.read()
     )
-    print(json.dumps(json.loads(response["Body"].read()), indent=2))
+    print(response["Body"].read().decode())
 
 
 def delete(sm, args: argparse.Namespace) -> None:
@@ -105,15 +77,15 @@ def main() -> None:
     p.add_argument("--role", required=True, help="SageMaker execution role ARN")
     p.add_argument("--instance-type", default=DEFAULT_INSTANCE, help=f"default {DEFAULT_INSTANCE}")
     p.add_argument("--instance-count", type=int, default=1)
-    p.add_argument("--max-batch", type=int, default=32, help="questions per forward pass")
-    p.add_argument("--strict-window", action="store_true", help="422 instead of truncating")
+    p.add_argument(
+        "--serve-args",
+        default="",
+        help='extra `strands-decider serve` options, e.g. "--max-batch 8"',
+    )
     p.add_argument("--no-wait", action="store_true", help="return before the endpoint is InService")
 
-    p = sub.add_parser("invoke", help="ask the endpoint questions, like `strands-decider ask`")
-    p.add_argument("--state", default="")
-    p.add_argument("--noul", action="append", default=[], help="a yes/no question")
-    p.add_argument("--choice", action="append", default=[], help="QUESTION=opt,opt,...")
-    p.add_argument("--score", action="append", default=[], help="QUESTION=level,level,...")
+    p = sub.add_parser("invoke", help="send a /v1/systemone request body; print the response")
+    p.add_argument("body", nargs="?", type=argparse.FileType("rb"), default=sys.stdin.buffer)
 
     sub.add_parser("delete", help="delete the endpoint, endpoint config and model")
 

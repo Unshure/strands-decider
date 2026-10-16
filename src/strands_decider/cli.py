@@ -92,11 +92,11 @@ def serve_cmd(
         help="With batching: wait up to this many ms after a request arrives for others to "
         "join its forward. 0 (default) takes only what is already queued.",
     ),
-    batch_tune: bool = typer.Option(
-        False, "--batch-tune",
-        help="With batching: time forwards of 1, 2, 4, ... rows at 256 / 1k / 4k tokens at "
-        "startup and cap each shared forward at the measured best (batching pays for short rows; "
-        "for long rows it can cost).",
+    batch_tune: bool | None = typer.Option(
+        None, "--batch-tune/--no-batch-tune",
+        help="With batching: at startup, time forwards of 1, 2, 4, ... rows at 256 / 1k / 4k "
+        "tokens and cap shared forwards at the fastest size that fits (like vLLM's startup "
+        "profiling run). Default: on for --device cuda.",
     ),
 ) -> None:
     """Serve POST /v1/systemone. JevBench's typesafe adapter runs against it unchanged."""

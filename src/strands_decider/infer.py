@@ -85,7 +85,7 @@ class EngineConfig:
     # Long prompts are compute-bound, and padding them only costs. None: no cap.
     batch_pad_slack: float | None = 0.25
     batch_pad_free: int = 4096
-    # Measured by `tune_batching` (serve --batch-tune): {row width: best rows per forward}.
+    # Measured by `tune_batching` (at serve startup): {row width: best rows per forward}.
     # A forward of width w then holds at most the smaller of its neighbouring widths'
     # best token counts (rows x width). Batching pays for short, launch-bound rows; for
     # long rows a torso can be memory-bound, and a larger forward only spills its
@@ -654,8 +654,9 @@ class SystemOneEngine:
                       gain: float = 1.05) -> dict[int, int]:
         """Measure, for synthetic rows of each width, the rows per forward with the best rows/s
         (k = 1, 2, 4, ... within the budgets; a larger k must gain `gain`x, and the search stops
-        once rows/s falls), and keep them in cfg.batch_rows_by_width for `plan_rows`. Run once
-        at startup (serve --batch-tune), before requests arrive."""
+        once rows/s falls or a forward runs out of memory), and keep them in
+        cfg.batch_rows_by_width for `plan_rows`. The server runs it once at startup, before
+        requests arrive, as vLLM runs a profiling forward to size its batches to the GPU."""
         import time
 
         sync = torch.cuda.synchronize if str(self.device).startswith("cuda") else (lambda: None)
@@ -672,12 +673,17 @@ class SystemOneEngine:
             while k <= self.cfg.batch_rows and (k == 1 or (
                     k * w <= self.cfg.batch_tokens and (quad is None or k * w * w <= quad))):
                 rows = [row] * k
-                self._forward_rows(rows)  # warm-up for this shape
-                sync()
-                t = time.perf_counter()
-                for _ in range(reps):
-                    self._forward_rows(rows)
-                sync()
+                try:
+                    self._forward_rows(rows)  # warm-up for this shape
+                    sync()
+                    t = time.perf_counter()
+                    for _ in range(reps):
+                        self._forward_rows(rows)
+                    sync()
+                except torch.OutOfMemoryError:  # the largest forward that fits is the cap
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    break
                 rate = k * reps / (time.perf_counter() - t)
                 if rate > best_rate * gain:
                     best_k, best_rate = k, rate

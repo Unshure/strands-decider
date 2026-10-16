@@ -145,7 +145,7 @@ def create_app(
     max_batch_tokens: int | None = None,
     batching: bool | None = None,
     batch_wait_ms: float = 0.0,
-    batch_tune: bool = False,
+    batch_tune: bool | None = None,
 ) -> FastAPI:
     global _engine
 
@@ -183,8 +183,14 @@ def create_app(
     # concurrent requests share forwards, and forwards run one at a time. It is the default
     # on CUDA, where it was measured; MPS serialises requests anyway (issue #9), and the MLX
     # and vision engines score each request alone, so batching would only queue them.
+    # The tune (on with batching on CUDA) times forwards of growing size at startup and caps
+    # shared forwards at the fastest: it pays on short prompts, where small forwards are
+    # launch-bound, and keeps long-prompt forwards small, which also keeps answers closer to
+    # unbatched ones.
     if batching is None:
         batching = str(device).startswith("cuda") and _engine.can_batch_rows()
+    if batch_tune is None:
+        batch_tune = bool(batching) and str(device).startswith("cuda")
     if batching and batch_tune:
         import torch
 
@@ -253,7 +259,7 @@ def serve(
     max_batch_tokens: int | None = None,
     batching: bool | None = None,
     batch_wait_ms: float = 0.0,
-    batch_tune: bool = False,
+    batch_tune: bool | None = None,
 ) -> None:
     import uvicorn
 

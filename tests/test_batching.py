@@ -321,15 +321,48 @@ class _AloneEngine(SystemOneEngine):
     (None, _AloneEngine, False),   # an engine that scores requests alone is not queued
 ])
 def test_batching_defaults_on_for_cuda(monkeypatch, batching, factory, on):
-    """Only /health is called: the "cuda" engine's tiny model stays on the CPU."""
+    """Only /health is called: the "cuda" engine's tiny model stays on the CPU, and the
+    startup tune (on by default with batching on CUDA) is recorded rather than timed."""
     monkeypatch.setattr(server.StrandsDeciderModel, "load", classmethod(lambda cls, *a, **k: _model()))
     monkeypatch.setattr(StrandsDeciderModel, "to", lambda self, *a, **k: self)
+    tuned = []
+
+    def tune(self, *a, **k):
+        tuned.append(True)
+        self.cfg.batch_rows_by_width = {256: 8}
+        return self.cfg.batch_rows_by_width
+
+    monkeypatch.setattr(SystemOneEngine, "tune_batching", tune)
     if factory is not None:
         monkeypatch.setattr(server, "SystemOneEngine", factory)
     app = server.create_app("checkpoints/does-not-exist", device="cuda", batching=batching,
                             max_batch=16, max_batch_tokens=4096)
     h = TestClient(app).get("/health").json()
     assert (h["batching"] is not None) is on
+    assert bool(tuned) is on  # tuned exactly when batching
     if on:  # one set of forward budgets
         assert (h["batching"]["batch_rows"], h["batching"]["batch_tokens"]) == (16, 4096)
         assert h["batching"]["wait_ms"] == 0.0
+        assert h["batching"]["rows_by_width"] == {"256": 8}
+
+
+def test_no_batch_tune_skips_the_startup_tune(monkeypatch):
+    monkeypatch.setattr(server.StrandsDeciderModel, "load", classmethod(lambda cls, *a, **k: _model()))
+    monkeypatch.setattr(StrandsDeciderModel, "to", lambda self, *a, **k: self)
+    monkeypatch.setattr(SystemOneEngine, "tune_batching", lambda self, *a, **k: pytest.fail("tuned"))
+    app = server.create_app("checkpoints/does-not-exist", device="cuda", batch_tune=False)
+    assert TestClient(app).get("/health").json()["batching"]["rows_by_width"] is None
+
+
+def test_tune_stops_at_the_largest_forward_that_fits(monkeypatch):
+    eng = _engine()
+    real = SystemOneEngine._forward_rows
+
+    def forward(self, rows):
+        if len(rows) > 2:
+            raise torch.OutOfMemoryError("CUDA out of memory. Tried to allocate 9 GiB")
+        return real(self, rows)
+
+    monkeypatch.setattr(SystemOneEngine, "_forward_rows", forward)
+    by = eng.tune_batching(widths=(16, 64), reps=1, gain=0.0)  # gain 0: every k that runs wins
+    assert by == {16: 2, 64: 2}

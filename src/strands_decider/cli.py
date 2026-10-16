@@ -82,20 +82,19 @@ def serve_cmd(
         None, "--max-batch-tokens",
         help="Also cap one forward's padded tokens (questions x longest state + question); for long-context torsos.",
     ),
-    batch_wait_ms: float | None = typer.Option(
-        None, "--batch-wait-ms",
-        help="Batch concurrent requests into shared forwards: wait up to this many ms after a "
-        "request arrives for others to join it (0: take only what is queued). Default: off.",
+    batching: bool | None = typer.Option(
+        None, "--batching/--no-batching",
+        help="Batch concurrent requests into shared forwards, bounded by --max-batch and "
+        "--max-batch-tokens. Default: on for --device cuda, off elsewhere.",
     ),
-    batch_tokens: int = typer.Option(
-        16384, "--batch-tokens", help="With --batch-wait-ms: padded tokens per shared forward.",
-    ),
-    batch_rows: int = typer.Option(
-        64, "--batch-rows", help="With --batch-wait-ms: rows (questions) per shared forward.",
+    batch_wait_ms: float = typer.Option(
+        0.0, "--batch-wait-ms",
+        help="With batching: wait up to this many ms after a request arrives for others to "
+        "join its forward. 0 (default) takes only what is already queued.",
     ),
     batch_tune: bool = typer.Option(
         False, "--batch-tune",
-        help="With --batch-wait-ms: time forwards of 1, 2, 4, ... rows at 256 / 1k / 4k tokens at "
+        help="With batching: time forwards of 1, 2, 4, ... rows at 256 / 1k / 4k tokens at "
         "startup and cap each shared forward at the measured best (batching pays for short rows; "
         "for long rows it can cost).",
     ),
@@ -109,8 +108,8 @@ def serve_cmd(
         checkpoint, host=host, port=port, device=selected_device,
         use_prefix_cache=not no_prefix_cache, model_name=model_name,
         strict_window=strict_window, max_batch=max_batch, vision=vision,
-        max_batch_tokens=max_batch_tokens, batch_wait_ms=batch_wait_ms,
-        batch_tokens=batch_tokens, batch_rows=batch_rows, batch_tune=batch_tune,
+        max_batch_tokens=max_batch_tokens, batching=batching, batch_wait_ms=batch_wait_ms,
+        batch_tune=batch_tune,
     )
 
 

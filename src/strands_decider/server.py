@@ -45,7 +45,7 @@ class MicroBatcher:
     requests in flight.
     """
 
-    def __init__(self, engine: SystemOneEngine, wait_ms: float = 5.0):
+    def __init__(self, engine: SystemOneEngine, wait_ms: float = 0.0):
         self.engine = engine
         self.wait_s = max(0.0, float(wait_ms)) / 1000.0
         self._queue: collections.deque[_Pending] = collections.deque()
@@ -143,9 +143,8 @@ def create_app(
     max_batch: int = 32,
     vision: bool = False,
     max_batch_tokens: int | None = None,
-    batch_wait_ms: float | None = None,
-    batch_tokens: int = 16384,
-    batch_rows: int = 64,
+    batching: bool | None = None,
+    batch_wait_ms: float = 0.0,
     batch_tune: bool = False,
 ) -> FastAPI:
     global _engine
@@ -160,10 +159,13 @@ def create_app(
     # on the same host cannot be confused. HF repo ids ("org/name") collapse to `name`.
     resolved_name = model_name or os.path.basename(checkpoint.rstrip("/")) or checkpoint
 
+    # One set of forward budgets: --max-batch and --max-batch-tokens bound a forward whether
+    # its rows come from one request or from several. Unset, --max-batch-tokens leaves one
+    # request's own forwards uncapped, as before, and caps shared forwards at 16,384 tokens.
     config = EngineConfig(
         device=device, use_prefix_cache=use_prefix_cache, model_name=resolved_name,
         strict_window=strict_window, max_batch=max_batch, max_batch_tokens=max_batch_tokens,
-        batch_tokens=batch_tokens, batch_rows=batch_rows,
+        batch_rows=max_batch, batch_tokens=max_batch_tokens or EngineConfig.batch_tokens,
     )
     if vision:
         if device == "mlx":
@@ -177,15 +179,19 @@ def create_app(
         model = StrandsDeciderModel.load(checkpoint, attn_implementation=attn_implementation)
         _engine = SystemOneEngine(model, config)
 
-    # With batch_wait_ms set, every device call goes through one micro-batching thread
-    # (MicroBatcher): concurrent requests share forwards, and forwards run one at a time.
-    if batch_wait_ms is not None and batch_tune:
+    # With batching, every device call goes through one micro-batching thread (MicroBatcher):
+    # concurrent requests share forwards, and forwards run one at a time. It is the default
+    # on CUDA, where it was measured; MPS serialises requests anyway (issue #9), and the MLX
+    # and vision engines score each request alone, so batching would only queue them.
+    if batching is None:
+        batching = str(device).startswith("cuda") and _engine.can_batch_rows()
+    if batching and batch_tune:
         import torch
 
         with torch.inference_mode():
             tuned = _engine.tune_batching()
         print(f"[strands-decider] batching tuned: rows per forward by width {tuned}", flush=True)
-    batcher = MicroBatcher(_engine, batch_wait_ms) if batch_wait_ms is not None else None
+    batcher = MicroBatcher(_engine, batch_wait_ms) if batching else None
     app.state.batcher = batcher
 
     @app.get("/health")
@@ -245,9 +251,8 @@ def serve(
     max_batch: int = 32,
     vision: bool = False,
     max_batch_tokens: int | None = None,
-    batch_wait_ms: float | None = None,
-    batch_tokens: int = 16384,
-    batch_rows: int = 64,
+    batching: bool | None = None,
+    batch_wait_ms: float = 0.0,
     batch_tune: bool = False,
 ) -> None:
     import uvicorn
@@ -261,9 +266,8 @@ def serve(
         max_batch=max_batch,
         vision=vision,
         max_batch_tokens=max_batch_tokens,
+        batching=batching,
         batch_wait_ms=batch_wait_ms,
-        batch_tokens=batch_tokens,
-        batch_rows=batch_rows,
         batch_tune=batch_tune,
     )
     # Single worker: the model owns the GPU, and forking more would just duplicate it.

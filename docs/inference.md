@@ -244,6 +244,24 @@ Questions are fitted before the cut and scored independently, so answers change 
 float rounding. Long-context torsos (Gemma 4 at a 32,768-token window) need it; unset, only
 `--max-batch` applies.
 
+**On CUDA, concurrent requests share forwards.** One thread owns the GPU. It takes every
+request already queued, up to `--max-batch` questions and `--max-batch-tokens` padded tokens
+(16,384 when unset), and scores them in one right-padded forward. Rows are padded on the
+right and masked, so each answer equals the answer to the same request served alone, to float
+rounding; `tests/test_batching.py` checks this for Qwen3, Qwen3.5 and Gemma 4 torsos. A
+request with several questions on one state still takes the shared-prefix path alone.
+`--batch-wait-ms N` holds a request up to N ms for others to join it (default 0, no wait).
+`--batch-tune` times forwards of growing size at startup and caps shared forwards at the
+fastest. `--no-batching` gives each request its own forward again, and `--batching` turns
+batching on for other devices. `/health` reports the budgets and how many requests shared a
+forward. On one L40S, strands-decider-2B-qwen3.5-v1-2610 with 32 requests in flight serves
+37.3 decisions/s on 256-token prompts (+30.9 vs. 6.4 without batching) and 8.47 on
+1,024-token prompts (+5.44 vs. 3.03). Its argmax answers agree with unbatched serving on
+99.58% of 1,895 decision prompts, and the decisions that differ are near ties. Batching
+costs where the GPU is already busy. Four concurrent 2,000-token requests on one state wait
+for a shared forward, and their median latency rises 25-35%. On E4B and 12B with 1,024-token
+prompts, the GPU is 93-99% busy without batching, and throughput is 2-6% lower with it.
+
 ## Gemma 4 models
 
 The four Gemma 4 models serve with the same commands as the Qwen3.5 model. They need the code on

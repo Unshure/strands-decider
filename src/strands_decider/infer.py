@@ -75,9 +75,10 @@ class EngineConfig:
     # at most this many padded tokens (rows x longest row) and this many rows. A row longer
     # than the budget runs alone, as it would unbatched. With eager attention (Gemma 4 E2B)
     # a forward is also held to rows x longest^2 <= window^2: its score matrices are then
-    # no larger than those of one window-filling request.
+    # no larger than those of one window-filling request. The server sets them from
+    # --max-batch and --max-batch-tokens.
     batch_tokens: int = 16384
-    batch_rows: int = 64
+    batch_rows: int = 32
     # Padding waste: a row joins a forward only while its padded tokens stay within
     # (1 + batch_pad_slack) x its real tokens, unless the forward is at most
     # batch_pad_free tokens (short forwards are launch-bound: padding there is free).
@@ -596,7 +597,7 @@ class SystemOneEngine:
     # pooled `<answer>` position and the option positions are all real tokens, so batching
     # changes answers only by float rounding.
 
-    def _row_batchable(self) -> bool:
+    def can_batch_rows(self) -> bool:
         """Whether this engine scores rows with the base class's own forward (not MLX or
         vision, which override the low-level paths and so always run requests alone)."""
         cls = type(self)
@@ -605,7 +606,7 @@ class SystemOneEngine:
 
     def prepare(self, request: SystemOneRequest) -> PreparedRequest:
         """Host-side preparation of one request for `evaluate_prepared` (no device work)."""
-        if not self._row_batchable():
+        if not self.can_batch_rows():
             return PreparedRequest(request, list(request.questions), [], None)
         names, rendered = self._render(request)
         state_text = render_state(request.state)

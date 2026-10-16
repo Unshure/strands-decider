@@ -248,7 +248,7 @@ def _client(monkeypatch, engine_factory=None, wait_ms=5.0, kind="qwen3"):
     if engine_factory is not None:
         monkeypatch.setattr(server, "SystemOneEngine", engine_factory)
     return TestClient(server.create_app("checkpoints/does-not-exist", device="cpu", strict_window=True,
-                                        batch_wait_ms=wait_ms),
+                                        batching=True, batch_wait_ms=wait_ms),
                       raise_server_exceptions=False)
 
 
@@ -302,6 +302,34 @@ def test_server_error_fails_only_that_request_and_keeps_serving(monkeypatch):
 
 
 def test_server_without_batching_is_unchanged(monkeypatch):
+    """Off by default on CPU (and MPS, MLX): requests run as before."""
     monkeypatch.setattr(server.StrandsDeciderModel, "load", classmethod(lambda cls, *a, **k: _model()))
     client = TestClient(server.create_app("checkpoints/does-not-exist", device="cpu", strict_window=True))
     assert client.get("/health").json()["batching"] is None
+
+
+class _AloneEngine(SystemOneEngine):
+    """Overrides `evaluate`, as the vision and MLX engines do, so it cannot batch rows."""
+
+    def evaluate(self, request):
+        return super().evaluate(request)
+
+
+@pytest.mark.parametrize("batching, factory, on", [
+    (None, None, True),            # the CUDA default
+    (False, None, False),          # --no-batching
+    (None, _AloneEngine, False),   # an engine that scores requests alone is not queued
+])
+def test_batching_defaults_on_for_cuda(monkeypatch, batching, factory, on):
+    """Only /health is called: the "cuda" engine's tiny model stays on the CPU."""
+    monkeypatch.setattr(server.StrandsDeciderModel, "load", classmethod(lambda cls, *a, **k: _model()))
+    monkeypatch.setattr(StrandsDeciderModel, "to", lambda self, *a, **k: self)
+    if factory is not None:
+        monkeypatch.setattr(server, "SystemOneEngine", factory)
+    app = server.create_app("checkpoints/does-not-exist", device="cuda", batching=batching,
+                            max_batch=16, max_batch_tokens=4096)
+    h = TestClient(app).get("/health").json()
+    assert (h["batching"] is not None) is on
+    if on:  # one set of forward budgets
+        assert (h["batching"]["batch_rows"], h["batching"]["batch_tokens"]) == (16, 4096)
+        assert h["batching"]["wait_ms"] == 0.0

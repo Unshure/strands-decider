@@ -265,7 +265,7 @@ On one L40S, strands-decider-2B-qwen3.5-v1-2610 with 32 requests in flight serve
 decisions/s on 256-token prompts (+42.7 vs. 6.4 without batching), 7.77 on 1,024-token
 prompts (+4.74 vs. 3.03) and 3.20 on 4,096-token prompts (+2.13 vs. 1.07), and a lone request
 takes 83.5 ms (−2.0 ms vs. 85.5). With tuned forwards, argmax answers agree with unbatched
-serving on 99.58% of 1,895 decision prompts for 2B and 99.42% for E2B, and the decisions that
+serving on 99.58% of 1,895 decision prompts for 2B and 99.47% for E2B, and the decisions that
 differ are near ties. Untuned forwards moved E2B's answers twice as far (98.94%).
 
 Batching costs where the GPU is already busy. Four concurrent 2,000-token requests on one

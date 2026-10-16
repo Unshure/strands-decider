@@ -258,9 +258,11 @@ forward. On one L40S, strands-decider-2B-qwen3.5-v1-2610 with 32 requests in fli
 37.3 decisions/s on 256-token prompts (+30.9 vs. 6.4 without batching) and 8.47 on
 1,024-token prompts (+5.44 vs. 3.03). Its argmax answers agree with unbatched serving on
 99.58% of 1,895 decision prompts, and the decisions that differ are near ties. Batching
-costs where the GPU is already busy. Four concurrent 2,000-token requests on one state wait
-for a shared forward, and their median latency rises 25-35%. On E4B and 12B with 1,024-token
-prompts, the GPU is 93-99% busy without batching, and throughput is 2-6% lower with it.
+costs where the GPU is already busy. Four concurrent 2,000-token requests on one state share a
+forward and finish together, so each request's median latency rises 25-35% over a server that
+runs forwards one at a time, while the turn, done when all four are answered, ends as before.
+On E4B and 12B with 1,024-token prompts the GPU is 93-99% busy without batching, and
+throughput is 2-6% lower with it (measured with `--batch-wait-ms 5 --batch-tune`).
 
 ## Gemma 4 models
 

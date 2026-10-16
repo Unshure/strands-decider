@@ -228,6 +228,14 @@ curl -s localhost:8000/v1/systemone -H 'content-type: application/json' -d '{
 A hybrid torso such as v14's shares the state across questions like any other; a single
 question is encoded in one pass ([Asking many questions is nearly free](#asking-many-questions-is-nearly-free)).
 
+`--compile-mode MODE` wraps the torso in `torch.compile` (CUDA only; a no-op on `mps`,
+`cpu` and `mlx`). `MODE` is one of `default`, `reduce-overhead` or `max-autotune`, matching
+`torch.compile`'s `mode` argument. Experimental: speedup depends on how often Dynamo
+recompiles for variable (state + question) shapes -- benchmark before enabling in
+production. `reduce-overhead` uses CUDA graphs and is the most shape-strict. The readout
+stays eager, so the fp32 numerics pin (`tests/test_prefix_cache_is_exact_in_fp32`) is
+unchanged by the flag.
+
 The `state` may be empty when the question carries the whole task. An option description
 may be a string, structured data (rendered as JSON, like a structured `state`), or `null`
 for a bare label.

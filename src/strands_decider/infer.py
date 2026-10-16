@@ -71,6 +71,13 @@ class EngineConfig:
     # cut and scored independently, so answers only move by float rounding; long-context
     # Gemma torsos need it at a 32,768 window. None: off.
     max_batch_tokens: int | None = None
+    # torch.compile mode for the torso ("default", "reduce-overhead", "max-autotune"). None
+    # (default) skips compile. Only wired for CUDA today; the flag is a no-op on mps/cpu/mlx
+    # (torch.compile on MPS is still partial; the MLX engine has its own backend; CPU would
+    # need a different mode and conflicts with cpu_kernels). Experimental: speedup depends on
+    # how often Dynamo recompiles for variable (state + question) shapes -- benchmark before
+    # enabling in production. "reduce-overhead" uses CUDA graphs and is the most shape-strict.
+    compile_mode: str | None = None
 
 
 class UnforkableCache(TypeError):
@@ -157,6 +164,7 @@ class SystemOneEngine:
         self.model = model.to(self.cfg.device).eval()
         if str(self.cfg.device) == "cpu":
             self._upcast_torso_for_cpu()
+        self._maybe_compile_torso()
         self.tok = model.tokenizer
         self.device = self.cfg.device
         # Sticky, monotonic False->True: cache the first UnforkableCache so later
@@ -167,6 +175,24 @@ class SystemOneEngine:
         # "Already borrowed", or silently uses another thread's max_length).
         # Tokenisation is cheap relative to the model forward, so holding this is fine.
         self._tok_lock = threading.Lock()
+
+    def _maybe_compile_torso(self) -> None:
+        """Wrap the torso in `torch.compile` when `EngineConfig.compile_mode` is set and
+        the device supports it. CUDA only today -- a no-op elsewhere, with a one-line note
+        so a misapplied flag is visible. The readout and the pointer gather stay eager:
+        the torso forward is the dominant cost and the only piece worth compiling first.
+        """
+        mode = self.cfg.compile_mode
+        if mode is None:
+            return
+        device_s = str(self.cfg.device)
+        if not device_s.startswith("cuda"):
+            print(
+                f"[strands-decider] compile_mode={mode!r} ignored on device {device_s!r}: "
+                "torch.compile is only wired for CUDA."
+            )
+            return
+        self.model.torso = torch.compile(self.model.torso, mode=mode)
 
     def _upcast_torso_for_cpu(self) -> None:
         """Run a half-precision torso in fp32 on CPU.
@@ -532,13 +558,15 @@ def load_engine(
     device: str = "cuda",
     use_prefix_cache: bool = True,
     attn_implementation: str | None = None,
+    compile_mode: str | None = None,
 ) -> SystemOneEngine:
     """An engine on a torch device ("cuda", "mps", "cpu"), or on MLX with `device="mlx"`."""
     if device == "mlx":
         return load_mlx(checkpoint, EngineConfig(device="mlx", use_prefix_cache=use_prefix_cache))
     model = StrandsDeciderModel.load(checkpoint, attn_implementation=attn_implementation)
     return SystemOneEngine(
-        model, EngineConfig(device=device, use_prefix_cache=use_prefix_cache)
+        model,
+        EngineConfig(device=device, use_prefix_cache=use_prefix_cache, compile_mode=compile_mode),
     )
 
 

@@ -82,6 +82,11 @@ def serve_cmd(
         None, "--max-batch-tokens",
         help="Also cap one forward's padded tokens (questions x longest state + question); for long-context torsos.",
     ),
+    compile_mode: str | None = typer.Option(
+        None, "--compile-mode",
+        help="torch.compile mode for the torso: 'default', 'reduce-overhead', 'max-autotune'. "
+        "CUDA only; a no-op on mps/cpu/mlx. Experimental: benchmark before using in production.",
+    ),
 ) -> None:
     """Serve POST /v1/systemone. JevBench's typesafe adapter runs against it unchanged."""
     from .server import serve
@@ -92,7 +97,7 @@ def serve_cmd(
         checkpoint, host=host, port=port, device=selected_device,
         use_prefix_cache=not no_prefix_cache, model_name=model_name,
         strict_window=strict_window, max_batch=max_batch, vision=vision,
-        max_batch_tokens=max_batch_tokens,
+        max_batch_tokens=max_batch_tokens, compile_mode=compile_mode,
     )
 
 

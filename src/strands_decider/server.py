@@ -47,6 +47,7 @@ def create_app(
     max_batch: int = 32,
     vision: bool = False,
     max_batch_tokens: int | None = None,
+    compile_mode: str | None = None,
 ) -> FastAPI:
     global _engine
 
@@ -63,6 +64,7 @@ def create_app(
     config = EngineConfig(
         device=device, use_prefix_cache=use_prefix_cache, model_name=resolved_name,
         strict_window=strict_window, max_batch=max_batch, max_batch_tokens=max_batch_tokens,
+        compile_mode=compile_mode,
     )
     if vision:
         if device == "mlx":
@@ -125,6 +127,7 @@ def serve(
     max_batch: int = 32,
     vision: bool = False,
     max_batch_tokens: int | None = None,
+    compile_mode: str | None = None,
 ) -> None:
     import uvicorn
 
@@ -137,6 +140,7 @@ def serve(
         max_batch=max_batch,
         vision=vision,
         max_batch_tokens=max_batch_tokens,
+        compile_mode=compile_mode,
     )
     # Single worker: the model owns the GPU, and forking more would just duplicate it.
     uvicorn.run(app, host=host, port=port, workers=1)

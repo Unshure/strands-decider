@@ -36,7 +36,7 @@ RUN if [ "${DEVICE}" = cuda ]; then \
     fi
 
 # The model is not in the image: SageMaker copies it from S3 to /opt/ml/model before the
-# container starts (the stack's ModelDataSource, fetch_model.py), and the stack sets
+# container starts (the stack's ModelDataSource, scripts/fetch-model.ts), and the stack sets
 # DECIDER_CHECKPOINT to its folder there. DECIDER_ARGS adds `strands-decider serve` options, such
 # as "--max-batch 8 --strict-window".
 ENV DECIDER_CHECKPOINT=/opt/ml/model/checkpoint \

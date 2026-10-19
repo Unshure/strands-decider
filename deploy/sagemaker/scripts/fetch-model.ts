@@ -31,9 +31,9 @@ interface DeciderConfig {
 }
 
 /** The config's base revision, else the one provenance.json records for the same base. */
-async function baseRevision(checkpoint: string, config: DeciderConfig): Promise<string | undefined> {
+async function baseRevision(checkpointDir: string, config: DeciderConfig): Promise<string | undefined> {
   if (config.base_revision) return config.base_revision;
-  const prov = path.join(checkpoint, "provenance.json");
+  const prov = path.join(checkpointDir, "provenance.json");
   if (!existsSync(prov)) return undefined;
   const meta = JSON.parse(await readFile(prov, "utf8"));
   return meta.base_model === config.base_model ? meta.base_model_revision : undefined;
@@ -42,14 +42,14 @@ async function baseRevision(checkpoint: string, config: DeciderConfig): Promise<
 async function main(model: string, revision: string, outDir: string): Promise<void> {
   // snapshotDownload returns <cache>/models--<org>--<name>/snapshots/<commit>.
   const snapshot = await snapshotDownload({ repo: model, revision });
-  const checkpoint = path.join(outDir, model.split("/").pop()!);
-  await cp(snapshot, checkpoint, { recursive: true, dereference: true });
+  const checkpointDir = path.join(outDir, model.split("/").pop()!);
+  await cp(snapshot, checkpointDir, { recursive: true, dereference: true });
 
-  const configPath = CONFIG_NAMES.map((n) => path.join(checkpoint, n)).find((p) => existsSync(p));
+  const configPath = CONFIG_NAMES.map((n) => path.join(checkpointDir, n)).find((p) => existsSync(p));
   if (!configPath) throw new Error(`${model}: no ${CONFIG_NAMES.join(" or ")}`);
   const config: DeciderConfig = JSON.parse(await readFile(configPath, "utf8"));
   const base = config.base_model;
-  const baseRev = await baseRevision(checkpoint, config);
+  const baseRev = await baseRevision(checkpointDir, config);
   console.error(`model ${model}@${path.basename(snapshot)}; base model ${base}@${baseRev ?? "main"}`);
   const baseSnapshot = await snapshotDownload({ repo: base, revision: baseRev });
   await mkdir(outDir, { recursive: true });

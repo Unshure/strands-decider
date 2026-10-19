@@ -180,8 +180,10 @@ export class DeciderEndpointStack extends Stack {
           initialInstanceCount: Number(ctx("instance_count")),
           initialVariantWeight: 1,
           // GPU hosts run Amazon Linux 2023 (NVIDIA driver 580, which runs the image's CUDA 12.6).
-          // SageMaker has no AL2023 option for CPU hosts, so they keep its default AMI.
-          inferenceAmiVersion: device === "cuda" ? GPU_AMI_VERSION : undefined,
+          // SageMaker has no AL2023 option for CPU hosts, so they keep its default AMI. The
+          // `inference_ami_version` context value overrides both, for GPU families outside the
+          // AL2023 AMI's compatibility list (ml.p2, ml.p3, ml.p6e-gb200).
+          inferenceAmiVersion: ctx("inference_ami_version") || (device === "cuda" ? GPU_AMI_VERSION : undefined),
           volumeSizeInGb: hasInstanceStorage(instanceType) ? undefined : MODEL_VOLUME_GB,
           // Copying up to about 52 GB from S3, then loading it (about 100 GB of float32 weights
           // on CPU for the largest model), takes minutes.

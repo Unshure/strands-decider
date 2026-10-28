@@ -17,9 +17,7 @@ import torch
 
 from training.data.format import Example
 
-pytestmark = pytest.mark.skipif(
-    not torch.cuda.is_available(), reason="needs a CUDA device"
-)
+pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA device")
 
 SMALL_BASE = os.environ.get("STRANDS_DECIDER_TEST_BASE", "Qwen/Qwen3-0.6B-Base")
 
@@ -28,14 +26,16 @@ SMALL_BASE = os.environ.get("STRANDS_DECIDER_TEST_BASE", "Qwen/Qwen3-0.6B-Base")
 def model():
     from strands_decider.modeling import StrandsDeciderConfig, StrandsDeciderModel
 
-    cfg = StrandsDeciderConfig(base_model=SMALL_BASE, num_slots=8, max_length=512, use_lora=False)
+    cfg = StrandsDeciderConfig(base_model=SMALL_BASE, max_length=512, use_lora=False)
     m = StrandsDeciderModel.from_pretrained_base(cfg)
     return m.to("cuda").eval()
 
 
 def test_torso_loads_without_lm_head(model):
     assert not hasattr(model.torso, "lm_head")
-    assert model.head.proj.out_features == 8
+    from strands_decider.modeling import PointerHead
+
+    assert isinstance(model.head, PointerHead)
 
 
 def test_forward_produces_masked_distribution(model):
@@ -49,9 +49,7 @@ def test_forward_produces_masked_distribution(model):
         label=0,
         task="smoke",
     )
-    coll = SystemOneCollator(
-        model.tokenizer, CollatorConfig(num_slots=8, max_length=512), train=False
-    )
+    coll = SystemOneCollator(model.tokenizer, CollatorConfig(max_length=512), train=False)
     batch = {k: v.to("cuda") for k, v in coll([ex]).items()}
     with torch.no_grad():
         out = model(
@@ -75,8 +73,10 @@ def fp32_model():
     from strands_decider.modeling import StrandsDeciderConfig, StrandsDeciderModel
 
     cfg = StrandsDeciderConfig(
-        base_model=SMALL_BASE, num_slots=8, max_length=512,
-        use_lora=False, torch_dtype="float32",
+        base_model=SMALL_BASE,
+        max_length=512,
+        use_lora=False,
+        torch_dtype="float32",
     )
     return StrandsDeciderModel.from_pretrained_base(cfg).to("cuda").eval()
 
@@ -193,8 +193,11 @@ def test_lora_checkpoint_save_load_roundtrip(tmp_path):
     from strands_decider.modeling import StrandsDeciderConfig, StrandsDeciderModel
 
     cfg = StrandsDeciderConfig(
-        base_model=SMALL_BASE, num_slots=8, max_length=512,
-        use_lora=True, lora_r=4, torch_dtype="float32",
+        base_model=SMALL_BASE,
+        max_length=512,
+        use_lora=True,
+        lora_r=4,
+        torch_dtype="float32",
     )
     model = StrandsDeciderModel.from_pretrained_base(cfg)
 
@@ -213,7 +216,6 @@ def test_lora_checkpoint_save_load_roundtrip(tmp_path):
     after = SystemOneEngine(reloaded.to("cuda").eval(), EngineConfig()).evaluate(request)
 
     assert _max_answer_delta(before, after) < 1e-4
-    assert reloaded.config.num_slots == 8
     assert reloaded.config.lora_r == 4
 
 
@@ -227,8 +229,10 @@ def test_temperature_is_applied_on_load(tmp_path):
     from strands_decider.schema import ChoiceQuestion, SystemOneRequest
 
     cfg = StrandsDeciderConfig(
-        base_model=SMALL_BASE, num_slots=8, max_length=512,
-        use_lora=False, torch_dtype="float32",
+        base_model=SMALL_BASE,
+        max_length=512,
+        use_lora=False,
+        torch_dtype="float32",
     )
     model = StrandsDeciderModel.from_pretrained_base(cfg)
     ckpt = str(tmp_path / "ckpt")
@@ -325,8 +329,10 @@ def test_chunking_close_enough_in_bf16(model):
 
 def _long_state(n_chars: int = 12000) -> str:
     """A policy-document-sized state, like JevBench's long_policy family."""
-    clause = ("Clause {i}: refunds require a receipt issued within 30 days, unless the "
-              "item was purchased on promotion, in which case store credit applies. ")
+    clause = (
+        "Clause {i}: refunds require a receipt issued within 30 days, unless the "
+        "item was purchased on promotion, in which case store credit applies. "
+    )
     out = []
     i = 0
     while sum(len(x) for x in out) < n_chars:

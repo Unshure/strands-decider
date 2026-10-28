@@ -9,6 +9,7 @@ Rows whose prompt exceeds the model's window are skipped, never truncated.
 
     python -m evaluation.multistep_eval CHECKPOINT [--data data/multistep_v14_eval.jsonl]
 """
+
 import argparse
 import json
 import warnings
@@ -31,8 +32,11 @@ def main():
 
     rows = load_examples([args.data])
     model = StrandsDeciderModel.load(args.checkpoint)
-    fits = [len(model.tokenizer(build_prompt(e.state, e.to_question())[0])["input_ids"])
-            <= model.config.max_length for e in rows]
+    fits = [
+        len(model.tokenizer(build_prompt(e.state, e.to_question())[0])["input_ids"])
+        <= model.config.max_length
+        for e in rows
+    ]
     keep = [e for e, f in zip(rows, fits, strict=True) if f]
     logits, *_ = collect_logits(model, keep, max_length=model.config.max_length, batch_size=4)
     preds = logits.argmax(-1).tolist()  # collect_logits masks the columns past each row's options

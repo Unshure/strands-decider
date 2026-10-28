@@ -72,9 +72,7 @@ def build_cmd(
                 if isinstance(exc, ModuleNotFoundError) and exc.name == "datasets"
                 else ""
             )
-            raise SystemExit(
-                f"recipe {name} failed, no corpus written: {exc!r}.{hint}"
-            ) from exc
+            raise SystemExit(f"recipe {name} failed, no corpus written: {exc!r}.{hint}") from exc
         (held if name in hold else kept).extend(examples)
         console.print(f"  [green]{len(examples):,}[/] examples")
 

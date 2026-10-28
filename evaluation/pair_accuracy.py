@@ -10,6 +10,7 @@ Pairs are consecutive rows: `generate_pairs` writes each pair's two halves toget
 
     python -m evaluation.pair_accuracy CHECKPOINT EVAL.jsonl
 """
+
 import json
 import sys
 import warnings
@@ -33,14 +34,20 @@ for t in sorted(set(tasks)):
     pairs = [(idx[k], idx[k + 1]) for k in range(0, len(idx) - 1, 2)]
     item = sum(ok[i] for i in idx) / len(idx)
     both = sum(ok[a] and ok[b] for a, b in pairs) / len(pairs)
+
     # Compare the chosen option's NAME: each half of a cross-reference pair has its own
     # option list, so equal indices can mean different answers and vice versa.
     def chosen(i):
         return exs[i].options[preds[i].pred][0]
+
     same = sum(chosen(a) == chosen(b) for a, b in pairs) / len(pairs)
     by[t] = (item, both, same, len(pairs))
-    print(f"  {t:<14} item {item:.4f}   pair (both right) {both:.4f}   "
-          f"same answer to both halves {same:.4f}   pairs={len(pairs)}")
+    print(
+        f"  {t:<14} item {item:.4f}   pair (both right) {both:.4f}   "
+        f"same answer to both halves {same:.4f}   pairs={len(pairs)}"
+    )
 allp = [(i, i + 1) for i in range(0, len(ok) - 1, 2)]
-print(f"  {'overall':<14} item {sum(ok) / len(ok):.4f}   pair (both right) "
-      f"{sum(ok[a] and ok[b] for a, b in allp) / len(allp):.4f}")
+print(
+    f"  {'overall':<14} item {sum(ok) / len(ok):.4f}   pair (both right) "
+    f"{sum(ok[a] and ok[b] for a, b in allp) / len(allp):.4f}"
+)

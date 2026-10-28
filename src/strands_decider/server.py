@@ -16,6 +16,7 @@ import time
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
+from . import __version__
 from .infer import EngineConfig, PreparedRequest, SystemOneEngine, load_mlx
 from .modeling import StrandsDeciderModel
 from .schema import SystemOneRequest, SystemOneResponse
@@ -51,8 +52,9 @@ class MicroBatcher:
         self._queue: collections.deque[_Pending] = collections.deque()
         self._cv = threading.Condition()
         self.stats = {"cycles": 0, "requests": 0, "max_requests_per_cycle": 0}
-        self._thread = threading.Thread(target=self._loop, name="strands-decider-batcher",
-                                        daemon=True)
+        self._thread = threading.Thread(
+            target=self._loop, name="strands-decider-batcher", daemon=True
+        )
         self._thread.start()
 
     def submit(self, request: SystemOneRequest) -> SystemOneResponse:
@@ -105,8 +107,9 @@ class MicroBatcher:
                 results = [exc] * len(batch)
             self.stats["cycles"] += 1
             self.stats["requests"] += len(batch)
-            self.stats["max_requests_per_cycle"] = max(self.stats["max_requests_per_cycle"],
-                                                       len(batch))
+            self.stats["max_requests_per_cycle"] = max(
+                self.stats["max_requests_per_cycle"], len(batch)
+            )
             for it, res in zip(batch, results, strict=True):
                 if isinstance(res, BaseException):
                     it.error = res
@@ -151,7 +154,7 @@ def create_app(
 
     app = FastAPI(
         title="strands-decider System One",
-        version="0.1.0",
+        version=__version__,
         description="Typed, calibrated answers. Choice, Score and Noul over one state.",
     )
 
@@ -163,9 +166,14 @@ def create_app(
     # its rows come from one request or from several. Unset, --max-batch-tokens leaves one
     # request's own forwards uncapped, as before, and caps shared forwards at 16,384 tokens.
     config = EngineConfig(
-        device=device, use_prefix_cache=use_prefix_cache, model_name=resolved_name,
-        strict_window=strict_window, max_batch=max_batch, max_batch_tokens=max_batch_tokens,
-        batch_rows=max_batch, batch_tokens=max_batch_tokens or EngineConfig.batch_tokens,
+        device=device,
+        use_prefix_cache=use_prefix_cache,
+        model_name=resolved_name,
+        strict_window=strict_window,
+        max_batch=max_batch,
+        max_batch_tokens=max_batch_tokens,
+        batch_rows=max_batch,
+        batch_tokens=max_batch_tokens or EngineConfig.batch_tokens,
     )
     if vision:
         if device == "mlx":
@@ -200,7 +208,10 @@ def create_app(
     batcher = MicroBatcher(_engine, batch_wait_ms) if batching else None
     app.state.batcher = batcher
 
+    # SageMaker and AgentCore Runtime call /ping and /invocations; each is the same
+    # handler as the path above it.
     @app.get("/health")
+    @app.get("/ping")
     def health() -> dict:
         eng = get_engine()
         return {
@@ -208,15 +219,18 @@ def create_app(
             "model": eng.cfg.model_name,
             "checkpoint": checkpoint,
             "base_model": eng.model.config.base_model,
-            "num_slots": eng.model.config.num_slots,
             "max_length": eng.model.config.max_length,
             "temperature": eng.model.config.temperature,
             "device": eng.cfg.device,
             "prefix_cache": eng.cfg.use_prefix_cache,
             "vision": vision,
-            "batching": None if batcher is None else {
-                "wait_ms": batch_wait_ms, "batch_tokens": eng.cfg.batch_tokens,
-                "batch_rows": eng.cfg.batch_rows, "rows_by_width": eng.cfg.batch_rows_by_width,
+            "batching": None
+            if batcher is None
+            else {
+                "wait_ms": batch_wait_ms,
+                "batch_tokens": eng.cfg.batch_tokens,
+                "batch_rows": eng.cfg.batch_rows,
+                "rows_by_width": eng.cfg.batch_rows_by_width,
                 **batcher.stats,
             },
         }
@@ -225,6 +239,7 @@ def create_app(
     guard = _engine_lock if _needs_serialisation(device) else contextlib.nullcontext()
 
     @app.post("/v1/systemone", response_model=SystemOneResponse)
+    @app.post("/invocations", response_model=SystemOneResponse)
     def systemone(request: SystemOneRequest) -> JSONResponse:
         eng = get_engine()
         started = time.perf_counter()
@@ -235,7 +250,7 @@ def create_app(
                 with guard:
                     response = eng.evaluate(request)
         except ValueError as exc:
-            # Option count over num_slots, malformed permutation, etc. -- caller error.
+            # Malformed permutation, etc. -- caller error.
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         elapsed_ms = (time.perf_counter() - started) * 1000
         payload = response.model_dump()

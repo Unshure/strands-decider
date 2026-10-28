@@ -3,6 +3,7 @@ checkpoint soup (soup.py).
 
 CPU only: tiny random Qwen3 torsos, as test_checkpoint_load.py and test_ddp.py.
 """
+
 from __future__ import annotations
 
 import copy
@@ -10,13 +11,14 @@ import json
 
 import pytest
 import torch
+from safetensors.torch import load_file
 from test_checkpoint_load import _tokenizer
 from test_ddp import _examples, _tiny_model_factory, _tokenizer_file
 from test_hf_export import _export, _jev
 
 import training.train as T
-from strands_decider import hf_export
 from strands_decider.modeling import StrandsDeciderConfig, StrandsDeciderModel
+from training import hf_export
 from training.data.format import write_jsonl
 from training.soup import soup
 
@@ -31,17 +33,30 @@ def ckpts(tmp_path, monkeypatch):
     """Three checkpoints of one recipe on one torso: their own adapters and heads."""
     from transformers import Qwen3Config, Qwen3Model
 
-    base = Qwen3Model(Qwen3Config(vocab_size=6, hidden_size=32, intermediate_size=64,
-                                  num_hidden_layers=1, num_attention_heads=4,
-                                  num_key_value_heads=2, head_dim=8))
-    monkeypatch.setattr(StrandsDeciderModel, "_load_torso",
-                        staticmethod(lambda *a: copy.deepcopy(base)))
+    base = Qwen3Model(
+        Qwen3Config(
+            vocab_size=6,
+            hidden_size=32,
+            intermediate_size=64,
+            num_hidden_layers=1,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            head_dim=8,
+        )
+    )
+    monkeypatch.setattr(
+        StrandsDeciderModel, "_load_torso", staticmethod(lambda *a: copy.deepcopy(base))
+    )
     paths = []
     for seed in range(3):
         torch.manual_seed(seed)
-        cfg = StrandsDeciderConfig(base_model=hf_export.BASE_MODEL, head_type="pointer",
-                                   pointer_dim=16, lora_r=2, torch_dtype="float32",
-                                   temperature=1.0 + seed)
+        cfg = StrandsDeciderConfig(
+            base_model=hf_export.BASE_MODEL,
+            pointer_dim=16,
+            lora_r=2,
+            torch_dtype="float32",
+            temperature=1.0 + seed,
+        )
         model = StrandsDeciderModel(cfg, copy.deepcopy(base), _tokenizer())
         model.attach_lora()
         with torch.no_grad():  # lora_B starts at zero, the norm at 1/0: make them matter
@@ -56,14 +71,22 @@ def ckpts(tmp_path, monkeypatch):
 def _inputs():
     g = torch.Generator().manual_seed(1)
     ids = torch.randint(0, 6, (2, 7), generator=g)
-    return dict(input_ids=ids, attention_mask=torch.ones_like(ids), n_slots=torch.tensor([3, 2]),
-                opt_idx=torch.tensor([[2, 4, 6], [3, 5, 0]]), temperature=1.0)
+    return dict(
+        input_ids=ids,
+        attention_mask=torch.ones_like(ids),
+        n_slots=torch.tensor([3, 2]),
+        opt_idx=torch.tensor([[2, 4, 6], [3, 5, 0]]),
+        temperature=1.0,
+    )
 
 
 def _delta_w(model):
     """{module name: s * B @ A} over the adapter's layers."""
-    return {n: m.lora_B["default"].weight @ m.lora_A["default"].weight * m.scaling["default"]
-            for n, m in model.torso.named_modules() if hasattr(m, "lora_A") and "default" in m.lora_A}
+    return {
+        n: m.lora_B["default"].weight @ m.lora_A["default"].weight * m.scaling["default"]
+        for n, m in model.torso.named_modules()
+        if hasattr(m, "lora_A") and "default" in m.lora_A
+    }
 
 
 def test_a_soup_of_one_checkpoint_is_that_checkpoint(ckpts, tmp_path):
@@ -91,31 +114,15 @@ def test_the_soup_averages_delta_w_and_the_heads_logits(ckpts, tmp_path):
     g = torch.Generator().manual_seed(2)
     decide, options = torch.randn(4, 32, generator=g), torch.randn(4, 5, 32, generator=g)
     with torch.no_grad():
-        torch.testing.assert_close(s.head(decide, options),
-                                   sum(m.head(decide, options) for m in models) / 3)
+        torch.testing.assert_close(
+            s.head(decide, options), sum(m.head(decide, options) for m in models) / 3
+        )
     # averaging the head tensors instead would not give this
     naive = copy.deepcopy(models[0].head)
     with torch.no_grad():
         for name, p in naive.named_parameters():
             p.copy_(sum(dict(m.head.named_parameters())[name] for m in models) / 3)
         assert not torch.allclose(naive(decide, options), s.head(decide, options), atol=1e-3)
-
-
-@pytest.mark.parametrize("hidden", [0, 8])
-def test_slot_heads_soup_to_their_mean_logit(hidden):
-    from strands_decider.modeling import SlotHead
-    from training.soup import soup_heads
-
-    heads = [SlotHead(32, 5, hidden=hidden) for _ in range(3)]
-    with torch.no_grad():
-        for h in heads:
-            h.norm.weight.normal_()
-            h.norm.bias.normal_()
-    s = SlotHead(32, 5, hidden=3 * hidden)
-    s.load_state_dict(soup_heads([h.state_dict() for h in heads], "slot"))
-    x = torch.randn(4, 32)
-    with torch.no_grad():
-        torch.testing.assert_close(s(x), sum(h(x) for h in heads) / 3)
 
 
 def test_the_soup_exports(ckpts, tmp_path):
@@ -136,13 +143,44 @@ def test_the_cli_writes_the_soup(ckpts, tmp_path):
 
 def test_checkpoints_of_different_recipes_are_refused(ckpts, tmp_path):
     cfg = json.load(open(f"{ckpts[1]}/strands_decider_config.json"))
-    json.dump({**cfg, "kl_frozen_weight": 0.5}, open(f"{ckpts[1]}/strands_decider_config.json", "w"))
+    json.dump({**cfg, "lora_r": 4}, open(f"{ckpts[1]}/strands_decider_config.json", "w"))
     with pytest.raises(ValueError, match="one recipe"):
         soup(ckpts, str(tmp_path / "soup"))
 
 
+def test_soup_accepts_stale_slot_era_keys_in_the_input_configs(ckpts, tmp_path):
+    """Pre-PR and v1-2610 configs still carry num_slots, head_type: 'pointer', head_hidden,
+    head_init, kl_frozen_weight. Soup drops them cleanly through from_json and does not
+    propagate them to the output config."""
+    for c in ckpts:
+        p = f"{c}/strands_decider_config.json"
+        cfg = json.load(open(p))
+        cfg.update(
+            {"num_slots": 24, "head_hidden": 0, "head_init": "random", "kl_frozen_weight": 0.3}
+        )
+        json.dump(cfg, open(p, "w"))
+    out = tmp_path / "soup"
+    soup(ckpts, str(out))
+    souped = json.load(open(out / "strands_decider_config.json"))
+    for k in ("num_slots", "head_hidden", "head_init", "kl_frozen_weight"):
+        assert k not in souped, k
+
+
+def test_soup_rejects_a_slot_head_input_config(ckpts, tmp_path):
+    """A slot-era checkpoint fails the config read before any adapter file is written."""
+    p = f"{ckpts[0]}/strands_decider_config.json"
+    cfg = json.load(open(p))
+    json.dump({**cfg, "head_type": "slot"}, open(p, "w"))
+    out = tmp_path / "soup"
+    with pytest.raises(ValueError, match="pointer-head"):
+        soup(ckpts, str(out))
+    assert not out.exists()
+
+
 def _tree(path):
-    return {str(p.relative_to(path)): p.read_bytes() for p in sorted(path.rglob("*")) if p.is_file()}
+    return {
+        str(p.relative_to(path)): p.read_bytes() for p in sorted(path.rglob("*")) if p.is_file()
+    }
 
 
 @pytest.mark.parametrize("where", ["same", "inside", "parent"])
@@ -160,7 +198,10 @@ def test_an_out_overlapping_an_input_is_refused_before_any_write(ckpts, tmp_path
 def test_expert_parameter_adapters_are_refused(ckpts, tmp_path):
     for c in ckpts:
         acfg = json.load(open(f"{c}/lora/adapter_config.json"))
-        json.dump({**acfg, "target_parameters": ["experts.weight"]}, open(f"{c}/lora/adapter_config.json", "w"))
+        json.dump(
+            {**acfg, "target_parameters": ["experts.weight"]},
+            open(f"{c}/lora/adapter_config.json", "w"),
+        )
     with pytest.raises(ValueError, match="target_parameters"):
         soup(ckpts, str(tmp_path / "soup"))
     assert not (tmp_path / "soup").exists()
@@ -170,13 +211,17 @@ def test_a_nonempty_out_is_refused_unless_replaced(ckpts, tmp_path):
     out = tmp_path / "soup"
     out.mkdir()
     (out / "head.safetensors").write_bytes(b"stale")  # an earlier export's head
-    (out / "provenance.json").write_text(json.dumps(
-        {"base_model": hf_export.BASE_MODEL, "base_model_revision": "unrelated"}))
+    (out / "provenance.json").write_text(
+        json.dumps({"base_model": hf_export.BASE_MODEL, "base_model_revision": "unrelated"})
+    )
     with pytest.raises(ValueError, match="not empty"):
         soup(ckpts, str(out))
     assert (out / "head.safetensors").read_bytes() == b"stale"
     soup(ckpts, str(out), replace=True)
-    assert not (out / "head.safetensors").exists() and not (out / "provenance.json").exists()
+    # the stale pre-existing files are gone; the fresh soup's head.safetensors replaces the
+    # stale bytes but is a real safetensors file (loads cleanly).
+    assert (out / "head.safetensors").read_bytes() != b"stale"
+    assert not (out / "provenance.json").exists()
     assert StrandsDeciderModel.load(str(out)).config.base_revision is None
 
 
@@ -185,8 +230,14 @@ def test_a_regex_target_is_kept(ckpts, tmp_path):
     acfg = json.load(open(f"{ckpts[0]}/lora/adapter_config.json"))
     json.dump({**acfg, "target_modules": regex}, open(f"{ckpts[0]}/lora/adapter_config.json", "w"))
     soup([ckpts[0]], str(tmp_path / "soup"))
-    assert json.load(open(tmp_path / "soup" / "lora" / "adapter_config.json"))["target_modules"] == regex
-    da, db = _delta_w(StrandsDeciderModel.load(ckpts[0])), _delta_w(StrandsDeciderModel.load(str(tmp_path / "soup")))
+    assert (
+        json.load(open(tmp_path / "soup" / "lora" / "adapter_config.json"))["target_modules"]
+        == regex
+    )
+    da, db = (
+        _delta_w(StrandsDeciderModel.load(ckpts[0])),
+        _delta_w(StrandsDeciderModel.load(str(tmp_path / "soup"))),
+    )
     assert set(da) == set(db) and all(torch.equal(da[k], db[k]) for k in da)
 
 
@@ -202,9 +253,14 @@ def test_base_revisions_resolve_as_the_loader_does(ckpts, tmp_path):
     # One pinned by its config, two by provenance: one base, and the soup pins it.
     provenance(ckpts[1], "rev-a")
     cfg = json.load(open(f"{ckpts[2]}/strands_decider_config.json"))
-    json.dump({**cfg, "base_revision": "rev-a"}, open(f"{ckpts[2]}/strands_decider_config.json", "w"))
+    json.dump(
+        {**cfg, "base_revision": "rev-a"}, open(f"{ckpts[2]}/strands_decider_config.json", "w")
+    )
     soup(ckpts, str(tmp_path / "soup"))
-    assert json.load(open(tmp_path / "soup" / "strands_decider_config.json"))["base_revision"] == "rev-a"
+    assert (
+        json.load(open(tmp_path / "soup" / "strands_decider_config.json"))["base_revision"]
+        == "rev-a"
+    )
 
 
 # ---------------------------------------------------------------- training
@@ -221,8 +277,11 @@ def corpus(tmp_path_factory):
 
 def _train(corpus, out, monkeypatch, **over):
     """3 optimizer steps; (each step's gradients, the validation rows, the saved head)."""
-    monkeypatch.setattr(StrandsDeciderModel, "from_pretrained_base",
-                        staticmethod(_tiny_model_factory(str(corpus / "tokenizer.json"))))
+    monkeypatch.setattr(
+        StrandsDeciderModel,
+        "from_pretrained_base",
+        staticmethod(_tiny_model_factory(str(corpus / "tokenizer.json"))),
+    )
     grads, vals = [], []
 
     def clip(params, max_norm, *a, **k):
@@ -237,16 +296,28 @@ def _train(corpus, out, monkeypatch, **over):
 
     monkeypatch.setattr(torch.nn.utils, "clip_grad_norm_", clip)
     monkeypatch.setattr(T, "split_examples", split)
-    base = dict(train_files=[str(corpus / "a.jsonl")], val_fraction=0.1, base_model="tiny",
-                head_type="pointer", pointer_dim=16, head_dropout=0.0, max_length=2048,
-                micro_batch_size=8, grad_accum=2, max_steps=3, log_every=1, eval_every=0,
-                output_dir=str(out))
+    base = dict(
+        train_files=[str(corpus / "a.jsonl")],
+        val_fraction=0.1,
+        base_model="tiny",
+        pointer_dim=16,
+        head_dropout=0.0,
+        max_length=2048,
+        micro_batch_size=8,
+        grad_accum=2,
+        max_steps=3,
+        log_every=1,
+        eval_every=0,
+        output_dir=str(out),
+    )
     T.train(T.TrainConfig(**{**base, **over}))
-    return grads, vals[0], torch.load(out / "slot_head.pt", weights_only=True)
+    return grads, vals[0], load_file(str(out / "head.safetensors"))
 
 
 def _same(a, b):
-    return all(torch.equal(x, y) for p, q in zip(a, b, strict=True) for x, y in zip(p, q, strict=True))
+    return all(
+        torch.equal(x, y) for p, q in zip(a, b, strict=True) for x, y in zip(p, q, strict=True)
+    )
 
 
 def test_val_split_seed_fixes_the_validation_rows_and_nothing_else(corpus, tmp_path, monkeypatch):
@@ -257,7 +328,7 @@ def test_val_split_seed_fixes_the_validation_rows_and_nothing_else(corpus, tmp_p
     f1 = _train(corpus, tmp_path / "d", monkeypatch, seed=1, val_split_seed=7)[1]
     assert f0 == f1 and f0 != v0
     g, v, h = _train(corpus, tmp_path / "e", monkeypatch, seed=0, val_split_seed=0)
-    h0 = torch.load(tmp_path / "a" / "slot_head.pt", weights_only=True)
+    h0 = load_file(str(tmp_path / "a" / "head.safetensors"))
     assert v == v0 and _same(g, g0) and all(torch.equal(h[k], h0[k]) for k in h)
 
 

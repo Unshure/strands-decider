@@ -1,4 +1,5 @@
 """Teacher distributions where the teacher agrees with gold (training/data/distill.py)."""
+
 import json
 
 import pytest
@@ -7,10 +8,12 @@ from training.data.distill import agreeing, main
 
 
 def rows():
-    return [{"kind": "noul", "label": 1, "options": [["false", ""], ["true", ""]]},
-            {"kind": "noul", "label": 0, "options": [["false", ""], ["true", ""]]},
-            {"kind": "choice", "label": 2, "options": [["a", ""], ["b", ""], ["c", ""]]},
-            {"kind": "score", "label": 1, "options": [["0", ""], ["1", ""], ["2", ""]]}]
+    return [
+        {"kind": "noul", "label": 1, "options": [["false", ""], ["true", ""]]},
+        {"kind": "noul", "label": 0, "options": [["false", ""], ["true", ""]]},
+        {"kind": "choice", "label": 2, "options": [["a", ""], ["b", ""], ["c", ""]]},
+        {"kind": "score", "label": 1, "options": [["0", ""], ["1", ""], ["2", ""]]},
+    ]
 
 
 def test_keeps_only_agreeing_noul_and_choice():
@@ -25,12 +28,36 @@ def test_width_mismatch_is_an_error():
 
 
 def test_main_appends_and_rejects_overlap(tmp_path):
-    corpus, teacher, extra, out = (tmp_path / n for n in ("c.jsonl", "t.jsonl", "r.jsonl", "o.jsonl"))
+    corpus, teacher, extra, out = (
+        tmp_path / n for n in ("c.jsonl", "t.jsonl", "r.jsonl", "o.jsonl")
+    )
     corpus.write_text("".join(json.dumps(r) + "\n" for r in rows()))
     teacher.write_text(json.dumps({"i": 0, "probs": [0.2, 0.8]}) + "\n")
     extra.write_text(json.dumps({"i": 10, "probs": [0.5, 0.5]}) + "\n")
-    main(["--corpus", str(corpus), "--teacher", str(teacher), "--append", str(extra), "--out", str(out)])
+    main(
+        [
+            "--corpus",
+            str(corpus),
+            "--teacher",
+            str(teacher),
+            "--append",
+            str(extra),
+            "--out",
+            str(out),
+        ]
+    )
     assert [json.loads(line)["i"] for line in out.read_text().splitlines()] == [0, 10]
     extra.write_text(json.dumps({"i": 0, "probs": [0.5, 0.5]}) + "\n")
     with pytest.raises(ValueError):
-        main(["--corpus", str(corpus), "--teacher", str(teacher), "--append", str(extra), "--out", str(out)])
+        main(
+            [
+                "--corpus",
+                str(corpus),
+                "--teacher",
+                str(teacher),
+                "--append",
+                str(extra),
+                "--out",
+                str(out),
+            ]
+        )

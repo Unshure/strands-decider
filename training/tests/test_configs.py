@@ -52,7 +52,10 @@ def test_train_parent_yaml_is_v14_except_two_keys():
 
 
 def test_v19_seed1_is_v19_except_seed_and_output_dir():
-    seed1, v19 = _load("configs", "experiments", "v19-seed1.yaml"), _load("configs", "experiments", "v19.yaml")
+    seed1, v19 = (
+        _load("configs", "experiments", "v19-seed1.yaml"),
+        _load("configs", "experiments", "v19.yaml"),
+    )
     assert _differing_keys(seed1, v19) == {"seed", "output_dir"}
 
 
@@ -71,4 +74,27 @@ def test_v19_saved_configs_load():
     saved = dataclasses.asdict(TrainConfig.from_yaml(os.path.join(FIXTURE, "train_config.json")))
     # The released run was configs/train.yaml under training/run_recipe.sh FAST=1, which
     # turns gradient checkpointing off and precomputes the frozen-KL reference (speed only).
-    assert _differing_keys(saved, _load("configs", "train.yaml")) == {"gradient_checkpointing", "precompute_frozen_kl"}
+    assert _differing_keys(saved, _load("configs", "train.yaml")) == {
+        "gradient_checkpointing",
+        "precompute_frozen_kl",
+    }
+
+
+def test_from_yaml_rejects_a_slot_head_config(tmp_path):
+    """A slot-era retrain config fails cleanly, not silently as a pointer run."""
+    import yaml
+
+    p = tmp_path / "slot.yaml"
+    p.write_text(yaml.safe_dump({"head_type": "slot"}))
+    with pytest.raises(ValueError, match="pointer-head"):
+        TrainConfig.from_yaml(str(p))
+
+
+def test_from_yaml_raises_on_an_unknown_key(tmp_path):
+    """A typo stops the run before training; only the retired slot-era keys are silently dropped."""
+    import yaml
+
+    p = tmp_path / "typo.yaml"
+    p.write_text(yaml.safe_dump({"kl_frozn_weight": 0.3}))
+    with pytest.raises(ValueError, match="unknown config key"):
+        TrainConfig.from_yaml(str(p))

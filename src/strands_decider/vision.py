@@ -305,25 +305,16 @@ class VisionDeciderModel(StrandsDeciderModel):
         self._mm = (pixel_values, image_grid_thw)
         try:
             return super().forward(
-                input_ids, attention_mask, n_slots,
-                labels=labels, label_dist=label_dist, weights=weights,
-                past_key_values=past_key_values, temperature=temperature, opt_idx=opt_idx,
+                input_ids,
+                attention_mask,
+                n_slots,
+                labels=labels,
+                label_dist=label_dist,
+                weights=weights,
+                past_key_values=past_key_values,
+                temperature=temperature,
+                opt_idx=opt_idx,
             )
-        finally:
-            self._mm = (None, None)
-
-    def frozen_slot_log_probs(
-        self,
-        input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
-        n_slots: torch.Tensor,
-        pixel_values: torch.Tensor | None = None,
-        image_grid_thw: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """The untouched torso's option-number reading, with the image in the prompt."""
-        self._mm = (pixel_values, image_grid_thw)
-        try:
-            return super().frozen_slot_log_probs(input_ids, attention_mask, n_slots)
         finally:
             self._mm = (None, None)
 
@@ -334,14 +325,18 @@ class VisionDeciderModel(StrandsDeciderModel):
         *,
         device_map: str | None = None,
         attn_implementation: str | None = None,
+        trainable: bool = False,
+        host_embeddings: bool | None = None,
     ) -> VisionDeciderModel:
-        """Load a Strands Decider checkpoint (e.g. v19) onto the multimodal torso.
+        """Load a Strands Decider checkpoint (e.g. v19) onto the multimodal torso, to serve it.
 
         Text checkpoints trained their adapter on the bare decoder (`layers.N...`); in
         the multimodal torso the same decoder sits under `language_model.layers.N...`,
         so the adapter's keys are remapped onto it. Text behaviour is unchanged: the
         weights the text path runs through are identical.
         """
+        if trainable or host_embeddings is not None:
+            raise ValueError("the multimodal model loads to serve only")
         from peft import set_peft_model_state_dict
         from safetensors.torch import load_file
         from transformers import AutoTokenizer
@@ -349,11 +344,11 @@ class VisionDeciderModel(StrandsDeciderModel):
         path = checkpoint_dir(path)
         config = StrandsDeciderConfig.from_json(config_path(path))
         config.base_revision = base_revision(path, config)
-        if config.head_type != "pointer":
-            raise ValueError("image input needs a pointer-head checkpoint")
         lora_file = os.path.join(path, "lora", "adapter_model.safetensors")
         if config.use_lora and not os.path.exists(lora_file):
-            raise FileNotFoundError(f"{lora_file}: missing, but the checkpoint config sets use_lora")
+            raise FileNotFoundError(
+                f"{lora_file}: missing, but the checkpoint config sets use_lora"
+            )
         head_state = load_head_state(path)
         tok = AutoTokenizer.from_pretrained(path)
         if tok.pad_token is None:
@@ -363,7 +358,8 @@ class VisionDeciderModel(StrandsDeciderModel):
         if config.use_lora:
             model.attach_lora()
             state = {
-                k if ".language_model." in k
+                k
+                if ".language_model." in k
                 else k.replace("base_model.model.", "base_model.model.language_model.", 1): v
                 for k, v in load_file(lora_file).items()
             }
@@ -432,9 +428,13 @@ class VisionEngine(SystemOneEngine):
         if not request.images:
             return super().evaluate(request)
         if len(request.images) > self.vcfg.max_images:
-            raise ValueError(f"{len(request.images)} images; this server takes at most {self.vcfg.max_images}")
-        images = [fit_image(decode_image(b, self.vcfg.max_image_pixels), self.vcfg.image_long_side)
-                  for b in request.images]
+            raise ValueError(
+                f"{len(request.images)} images; this server takes at most {self.vcfg.max_images}"
+            )
+        images = [
+            fit_image(decode_image(b, self.vcfg.max_image_pixels), self.vcfg.image_long_side)
+            for b in request.images
+        ]
         names = list(request.questions)
         rendered = [render_question(request.questions[n]) for n in names]
         answers: dict[str, Answer] = {}
@@ -449,18 +449,22 @@ class VisionEngine(SystemOneEngine):
             for i, name in enumerate(names[start : start + self.cfg.max_batch]):
                 rq = chunk[i]
                 answers[name] = _to_answer(
-                    rq, probs[i, : rq.n_slots].tolist(),
+                    rq,
+                    probs[i, : rq.n_slots].tolist(),
                     ordinal_smoothing=self.model.config.ordinal_smoothing,
                 )
         return SystemOneResponse(
-            model=self.cfg.model_name, answers=answers,
+            model=self.cfg.model_name,
+            answers=answers,
             usage=Usage(input_tokens=total, output_tokens=len(names)),
         )
 
     def ask_images(
         self, state: Content, questions: dict[str, Question], images: Sequence[str]
     ) -> SystemOneResponse:
-        return self.evaluate(SystemOneRequest(state=state, questions=questions, images=list(images)))
+        return self.evaluate(
+            SystemOneRequest(state=state, questions=questions, images=list(images))
+        )
 
     def _fit_images(
         self, state: Content, images: list[Image.Image], question_texts: list[str]
@@ -480,12 +484,18 @@ class VisionEngine(SystemOneEngine):
         longest = max(len(x) for x in q)
 
         img = self.image_processor(images=images, return_tensors="pt")
-        counts = image_tokens_for_grid(img["image_grid_thw"].tolist(), self.image_processor.merge_size)
-        mm = {"pixel_values": img["pixel_values"].to(self.device),
-              "image_grid_thw": img["image_grid_thw"].to(self.device)}
+        counts = image_tokens_for_grid(
+            img["image_grid_thw"].tolist(), self.image_processor.merge_size
+        )
+        mm = {
+            "pixel_values": img["pixel_values"].to(self.device),
+            "image_grid_thw": img["image_grid_thw"].to(self.device),
+        }
         with self._tok_lock:
-            s = self.tok(expand_image_tokens(render_image_state(state, len(images)), counts),
-                         add_special_tokens=True)["input_ids"]
+            s = self.tok(
+                expand_image_tokens(render_image_state(state, len(images)), counts),
+                add_special_tokens=True,
+            )["input_ids"]
         vend = self.tok.convert_tokens_to_ids(VISION_END)
         keep = max(i for i, t in enumerate(s) if t == vend) + 1  # through the last image
 
@@ -519,9 +529,7 @@ class VisionEngine(SystemOneEngine):
         n = prefix_ids.size(1)
         tt = mm_token_type_ids(self.model.torso, prefix_ids)
         base: Any = qwen_base(self.model.torso)
-        mpos, delta_t = base.get_rope_index(
-            prefix_ids, tt, image_grid_thw=mm["image_grid_thw"]
-        )
+        mpos, delta_t = base.get_rope_index(prefix_ids, tt, image_grid_thw=mm["image_grid_thw"])
         delta = int(delta_t.view(-1)[0])
         text_pos = torch.arange(n, device=self.device).view(1, 1, -1)
         prefix_out = self.model.torso(
@@ -533,24 +541,35 @@ class VisionEngine(SystemOneEngine):
             return_dict=True,
             **mm,
         )
-        cache = prefix_out.past_key_values if m == 1 else _expand_cache(prefix_out.past_key_values, m)
+        cache = (
+            prefix_out.past_key_values if m == 1 else _expand_cache(prefix_out.past_key_values, m)
+        )
 
         suffix_ids, suffix_mask = self._pad(q)
         full_mask = torch.cat(
             [torch.ones(m, n, dtype=suffix_mask.dtype, device=self.device), suffix_mask], dim=1
         )
-        st = (torch.arange(suffix_ids.size(1), device=self.device) + n).view(1, 1, -1).expand(1, m, -1)
+        st = (
+            (torch.arange(suffix_ids.size(1), device=self.device) + n)
+            .view(1, 1, -1)
+            .expand(1, m, -1)
+        )
         model = cast(VisionDeciderModel, self.model)
         hidden = model.encode(
-            suffix_ids, full_mask, past_key_values=cache,
+            suffix_ids,
+            full_mask,
+            past_key_values=cache,
             position_ids=torch.cat([st, (st + delta).expand(3, m, -1)], dim=0),
         )
         pooled = pool_last_token(hidden, full_mask).to(torch.float32)
         options = gather_options(hidden, self._option_idx(rendered, 0, offsets)).to(torch.float32)
         head: Any = self.model.head
-        logits = apply_temperature(head(pooled, options),
-                                   self._temperatures([rq.kind for rq in rendered]))
-        probs = masked_log_softmax(logits, torch.tensor([rq.n_slots for rq in rendered], device=self.device))
+        logits = apply_temperature(
+            head(pooled, options), self._temperatures([rq.kind for rq in rendered])
+        )
+        probs = masked_log_softmax(
+            logits, torch.tensor([rq.n_slots for rq in rendered], device=self.device)
+        )
         return probs.exp(), n + int(suffix_mask.sum().item())
 
 
@@ -565,7 +584,8 @@ def load_vision_engine(
     cache, `strict_window`, `max_batch`, model name), plus the image settings."""
     base = config or EngineConfig()
     names = {f.name for f in fields(EngineConfig)}
-    cfg = VisionEngineConfig(**{k: v for k, v in asdict(base).items() if k in names},
-                             image_long_side=image_long_side)
+    cfg = VisionEngineConfig(
+        **{k: v for k, v in asdict(base).items() if k in names}, image_long_side=image_long_side
+    )
     model = VisionDeciderModel.load(checkpoint, attn_implementation=attn_implementation)
     return VisionEngine(model, cfg)

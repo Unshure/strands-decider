@@ -59,13 +59,22 @@ from strands_decider.vision import (
 )
 
 # Every download is pinned to the revision the published results were measured on.
-V19, V19_REV = "StrandsAgents/strands-decider-2B-hobson-v19", "bb282d786bc251fd4e3068de3ada9ddbb38127cd"
+V19, V19_REV = (
+    "StrandsAgents/strands-decider-2B-hobson-v19",
+    "bb282d786bc251fd4e3068de3ada9ddbb38127cd",
+)
 BASE, BASE_REV = "Qwen/Qwen3.5-2B-Base", "b1485b2fa6dfa1287294f269f5fb618e03d52d7c"
 MAPIKA, MAPIKA_REV = "Mapika/decider-2b-vision", "863e290863655f1d6b69324d77d09ac972d21609"
-NB_REPO, NB_FILE, NB_REV = ("BaiqiL/NaturalBench", "data/train-00000-of-00003.parquet",
-                            "ba41a7d564877a9b64c094b08015ca493cc3e54b")
-POPE_REPO, POPE_FILE, POPE_REV = ("lmms-lab/POPE", "Full/adversarial-00000-of-00001.parquet",
-                                  "4db1276663dfa5eb8ad16a52d24c31a09e470896")
+NB_REPO, NB_FILE, NB_REV = (
+    "BaiqiL/NaturalBench",
+    "data/train-00000-of-00003.parquet",
+    "ba41a7d564877a9b64c094b08015ca493cc3e54b",
+)
+POPE_REPO, POPE_FILE, POPE_REV = (
+    "lmms-lab/POPE",
+    "Full/adversarial-00000-of-00001.parquet",
+    "4db1276663dfa5eb8ad16a52d24c31a09e470896",
+)
 
 
 # ---- data ------------------------------------------------------------------------------
@@ -98,7 +107,9 @@ def _mc(question: str) -> tuple[str, list[tuple[str, str]]]:
             want = chr(ord(want) + 1)
     if len(marks) < 2:
         raise ValueError(f"cannot parse options from {question!r}")
-    stem = question[: question.find("Option:")] if "Option:" in question else question[: marks[0][1]]
+    stem = (
+        question[: question.find("Option:")] if "Option:" in question else question[: marks[0][1]]
+    )
     opts = []
     for k, (name, _, end) in enumerate(marks):
         stop = marks[k + 1][1] if k + 1 < len(marks) else len(question)
@@ -118,21 +129,42 @@ def naturalbench(n_groups: int, local: str | None) -> Iterator[dict[str, Any]]:
                 gold = str(row[f"Image_{j}_Question_{k}"]).strip()
                 if mc:
                     stem, opts = _mc(q)
-                    item = {"kind": "choice", "question": stem, "options": opts,
-                            "gold": [n for n, _ in opts].index(gold[0])}
+                    item = {
+                        "kind": "choice",
+                        "question": stem,
+                        "options": opts,
+                        "gold": [n for n, _ in opts].index(gold[0]),
+                    }
                 else:
-                    item = {"kind": "noul", "question": q.strip(), "options": [("no", ""), ("yes", "")],
-                            "gold": 1 if gold.lower().startswith("y") else 0}
-                yield {**item, "id": f"nb-{row['Index']}-q{k}-i{j}", "bench": "naturalbench",
-                       "group": int(row["Index"]), "q": k, "i": j, "image": imgs[j]}
+                    item = {
+                        "kind": "noul",
+                        "question": q.strip(),
+                        "options": [("no", ""), ("yes", "")],
+                        "gold": 1 if gold.lower().startswith("y") else 0,
+                    }
+                yield {
+                    **item,
+                    "id": f"nb-{row['Index']}-q{k}-i{j}",
+                    "bench": "naturalbench",
+                    "group": int(row["Index"]),
+                    "q": k,
+                    "i": j,
+                    "image": imgs[j],
+                }
 
 
 def pope(n: int, local: str | None) -> Iterator[dict[str, Any]]:
     df = _parquet(POPE_REPO, POPE_FILE, POPE_REV, local).sort_values("question_id").head(n)
     for _, row in df.iterrows():
-        yield {"id": f"pope-{row['question_id']}", "bench": "pope_adversarial", "kind": "noul",
-               "question": row["question"].strip(), "options": [("no", ""), ("yes", "")],
-               "gold": 1 if row["answer"].strip().lower() == "yes" else 0, "image": row["image"]["bytes"]}
+        yield {
+            "id": f"pope-{row['question_id']}",
+            "bench": "pope_adversarial",
+            "kind": "noul",
+            "question": row["question"].strip(),
+            "options": [("no", ""), ("yes", "")],
+            "gold": 1 if row["answer"].strip().lower() == "yes" else 0,
+            "image": row["image"]["bytes"],
+        }
 
 
 def image_jevbench(jsonl: str) -> Iterator[dict[str, Any]]:
@@ -147,10 +179,18 @@ def image_jevbench(jsonl: str) -> Iterator[dict[str, Any]]:
                 path = os.path.join(root, "images", os.path.basename(path))
             with open(path, "rb") as g:
                 image = g.read()
-            yield {"id": r["id"], "bench": r["bench"], "kind": r["kind"], "question": r["question"],
-                   "options": [tuple(o) for o in r["options"]], "gold": r["gold"], "image": image,
-                   "dataset": r["dataset"], "exact": r["exact"],
-                   "official_mapika_ok": r.get("official_mapika_ok")}
+            yield {
+                "id": r["id"],
+                "bench": r["bench"],
+                "kind": r["kind"],
+                "question": r["question"],
+                "options": [tuple(o) for o in r["options"]],
+                "gold": r["gold"],
+                "image": image,
+                "dataset": r["dataset"],
+                "exact": r["exact"],
+                "official_mapika_ok": r.get("official_mapika_ok"),
+            }
 
 
 def _pil(b: bytes) -> Any:
@@ -184,7 +224,9 @@ class _DeciderSystem:
         counts: list[int] = []
         n_img = 0 if blind else 1
         if n_img:
-            out = self.proc(images=[fit_image(_pil(it["image"]), self.long_side)], return_tensors="pt")
+            out = self.proc(
+                images=[fit_image(_pil(it["image"]), self.long_side)], return_tensors="pt"
+            )
             counts = image_tokens_for_grid(out["image_grid_thw"].tolist(), self.proc.merge_size)
             mm = {"pixel_values": out["pixel_values"], "image_grid_thw": out["image_grid_thw"]}
         text = expand_image_tokens(render_image_state("", n_img), counts) + rq.text
@@ -224,8 +266,14 @@ class Strands(_DeciderSystem):
     @torch.no_grad()
     def probs(self, it: dict[str, Any], blind: bool) -> list[float]:
         rq, ids, opt, mm = self._inputs(it, blind)
-        out = self.model(ids, torch.ones_like(ids), torch.tensor([rq.n_slots], device=self.device), opt_idx=opt,
-                         temperature=self.temps.get(it["kind"], self.t_default), **mm)
+        out = self.model(
+            ids,
+            torch.ones_like(ids),
+            torch.tensor([rq.n_slots], device=self.device),
+            opt_idx=opt,
+            temperature=self.temps.get(it["kind"], self.t_default),
+            **mm,
+        )
         p = masked_log_softmax(out["logits"].float().cpu(), torch.tensor([rq.n_slots])).exp()[0]
         return [float(p[s]) for s in self._gold_slot(rq, it)]
 
@@ -240,26 +288,36 @@ class QwenUntrained(_DeciderSystem):
         if base == BASE:
             base = snapshot_download(BASE, revision=BASE_REV)
 
-        cfg = StrandsDeciderConfig(base_model=base, use_lora=False, head_type="pointer",
-                                   torch_dtype=dtype, max_length=4096)
+        cfg = StrandsDeciderConfig(
+            base_model=base, use_lora=False, head_type="pointer", torch_dtype=dtype, max_length=4096
+        )
         tok = AutoTokenizer.from_pretrained(base)
         self.device = device
-        self.model = VisionDeciderModel(cfg, VisionDeciderModel._load_torso(cfg, None, None), tok).to(device).eval()
+        self.model = (
+            VisionDeciderModel(cfg, VisionDeciderModel._load_torso(cfg, None, None), tok)
+            .to(device)
+            .eval()
+        )
         super().__init__(base)
 
     def _question(self, it: dict[str, Any]) -> Question:
         if it["kind"] == "noul":
-            return NoulQuestion(instructions=it["question"],
-                                criteria={"false": "the answer is no", "true": "the answer is yes"})
+            return NoulQuestion(
+                instructions=it["question"],
+                criteria={"false": "the answer is no", "true": "the answer is yes"},
+            )
         return ChoiceQuestion(instructions=it["question"], criteria=dict(it["options"]))
 
     @torch.no_grad()
     def probs(self, it: dict[str, Any], blind: bool) -> list[float]:
         rq, ids, _, mm = self._inputs(it, blind)
-        lp, _ = self.model.frozen_slot_log_probs(ids, torch.ones_like(ids),
-                                                 torch.tensor([rq.n_slots], device=self.device),
-                                                 pixel_values=mm.get("pixel_values"),
-                                                 image_grid_thw=mm.get("image_grid_thw"))
+        lp, _ = self.model.frozen_slot_log_probs(
+            ids,
+            torch.ones_like(ids),
+            torch.tensor([rq.n_slots], device=self.device),
+            pixel_values=mm.get("pixel_values"),
+            image_grid_thw=mm.get("image_grid_thw"),
+        )
         return [float(lp[0, s].exp()) for s in self._gold_slot(rq, it)]
 
 
@@ -277,7 +335,11 @@ class Mapika:
         from decider.vision import VisionDecisionModel
 
         self.example, self.q = Example, Q
-        self.m = VisionDecisionModel(repo, dtype=getattr(torch, dtype), grad_ckpt=False).to(device).eval()
+        self.m = (
+            VisionDecisionModel(repo, dtype=getattr(torch, dtype), grad_ckpt=False)
+            .to(device)
+            .eval()
+        )
 
     @torch.no_grad()
     def probs(self, it: dict[str, Any], blind: bool) -> list[float]:
@@ -286,8 +348,17 @@ class Mapika:
             img = _pil(it["image"])
             img.thumbnail((768, 768))  # its training images were <= 768 px
         opts = ["no", "yes"] if it["kind"] == "noul" else [f"{n}: {d}" for n, d in it["options"]]
-        inp = self.m.prepare([(img, self.example("This is a visual question about the image.",
-                                                  [self.q(it["question"], opts, 0)]))])
+        inp = self.m.prepare(
+            [
+                (
+                    img,
+                    self.example(
+                        "This is a visual question about the image.",
+                        [self.q(it["question"], opts, 0)],
+                    ),
+                )
+            ]
+        )
         lg = self.m.slot_logits(inp).float()[0]
         return torch.softmax(lg, -1)[: len(it["options"])].tolist()
 
@@ -295,7 +366,9 @@ class Mapika:
 # ---- driver ------------------------------------------------------------------------------
 
 
-def run_system(system: Any, items: list[dict[str, Any]], out: str) -> dict[str, list[dict[str, Any]]]:
+def run_system(
+    system: Any, items: list[dict[str, Any]], out: str
+) -> dict[str, list[dict[str, Any]]]:
     res: dict[str, list[dict[str, Any]]] = {}
     for blind in (False, True):
         tag = f"{system.name}{'-blind' if blind else ''}"
@@ -308,15 +381,32 @@ def run_system(system: Any, items: list[dict[str, Any]], out: str) -> dict[str, 
         t0 = time.time()
         with open(path, "a") as fh:
             for n, it in enumerate(todo, 1):
-                r = {k: it[k] for k in ("id", "bench", "kind", "gold", "group", "q", "i", "dataset",
-                                        "exact", "official_mapika_ok") if k in it}
+                r = {
+                    k: it[k]
+                    for k in (
+                        "id",
+                        "bench",
+                        "kind",
+                        "gold",
+                        "group",
+                        "q",
+                        "i",
+                        "dataset",
+                        "exact",
+                        "official_mapika_ok",
+                    )
+                    if k in it
+                }
                 r["probs"] = system.probs(it, blind)
                 fh.write(json.dumps(r) + "\n")
                 done[it["id"]] = r
                 if n % 50 == 0 or n == len(todo):
                     rate = n / max(1e-6, time.time() - t0)
-                    print(f"[vision-eval] {tag}: {n}/{len(todo)} {rate:.2f} it/s "
-                          f"eta {(len(todo) - n) / max(rate, 1e-6) / 60:.0f} min", flush=True)
+                    print(
+                        f"[vision-eval] {tag}: {n}/{len(todo)} {rate:.2f} it/s "
+                        f"eta {(len(todo) - n) / max(rate, 1e-6) / 60:.0f} min",
+                        flush=True,
+                    )
         res[tag] = [done[it["id"]] for it in items if it["id"] in done]
     return res
 
@@ -349,11 +439,20 @@ def _versions() -> dict[str, Any]:
 
     import transformers
 
-    return {"torch": torch.__version__, "transformers": transformers.__version__,
-            "python": platform.python_version(), "machine": platform.processor() or platform.machine(),
-            "threads": torch.get_num_threads(),
-            "revisions": {V19: V19_REV, BASE: BASE_REV, MAPIKA: MAPIKA_REV, NB_REPO: NB_REV,
-                          POPE_REPO: POPE_REV}}
+    return {
+        "torch": torch.__version__,
+        "transformers": transformers.__version__,
+        "python": platform.python_version(),
+        "machine": platform.processor() or platform.machine(),
+        "threads": torch.get_num_threads(),
+        "revisions": {
+            V19: V19_REV,
+            BASE: BASE_REV,
+            MAPIKA: MAPIKA_REV,
+            NB_REPO: NB_REV,
+            POPE_REPO: POPE_REV,
+        },
+    }
 
 
 def main() -> None:
@@ -362,22 +461,30 @@ def main() -> None:
     ap.add_argument("--systems", default="strands,qwen,mapika")
     ap.add_argument("--nb-groups", type=int, default=300)
     ap.add_argument("--pope", type=int, default=600)
-    ap.add_argument("--ijb-jsonl", help="Image JevBench preview items, built as README.md describes")
+    ap.add_argument(
+        "--ijb-jsonl", help="Image JevBench preview items, built as README.md describes"
+    )
     ap.add_argument("--nb-local")
     ap.add_argument("--pope-local")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    ap.add_argument("--checkpoint", default=V19,
-                    help="the strands system's checkpoint: v19 by default, or a fine-tuned one")
+    ap.add_argument(
+        "--checkpoint",
+        default=V19,
+        help="the strands system's checkpoint: v19 by default, or a fine-tuned one",
+    )
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
-    items = (list(naturalbench(a.nb_groups, a.nb_local)) if a.nb_groups else []) + \
-        (list(pope(a.pope, a.pope_local)) if a.pope else [])
+    items = (list(naturalbench(a.nb_groups, a.nb_local)) if a.nb_groups else []) + (
+        list(pope(a.pope, a.pope_local)) if a.pope else []
+    )
     if a.ijb_jsonl:
         items += list(image_jevbench(a.ijb_jsonl))
     print(f"[vision-eval] {len(items)} items", flush=True)
-    systems = {"strands": lambda: Strands(a.checkpoint, device=a.device),
-               "qwen": lambda: QwenUntrained(device=a.device),
-               "mapika": lambda: Mapika(device=a.device)}
+    systems = {
+        "strands": lambda: Strands(a.checkpoint, device=a.device),
+        "qwen": lambda: QwenUntrained(device=a.device),
+        "mapika": lambda: Mapika(device=a.device),
+    }
     all_res: dict[str, list[dict[str, Any]]] = {}
     errors: dict[str, str] = {}
     for name in a.systems.split(","):
@@ -387,8 +494,16 @@ def main() -> None:
             errors[name] = traceback.format_exc()
             print(f"[vision-eval] {name} FAILED\n{errors[name]}", flush=True)
         with open(os.path.join(a.out, "summary.json"), "w") as fh:
-            json.dump({"args": vars(a), "versions": _versions(), "errors": errors,
-                       "scores": score(all_res)}, fh, indent=2)
+            json.dump(
+                {
+                    "args": vars(a),
+                    "versions": _versions(),
+                    "errors": errors,
+                    "scores": score(all_res),
+                },
+                fh,
+                indent=2,
+            )
     if errors:
         sys.exit(1)
 

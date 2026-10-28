@@ -5,6 +5,7 @@ the SOURCE row -- never the transform's own bookkeeping -- so a bug that produce
 wrong label consistently would still be caught. v9 and v10 each shipped a generator
 with a wrong-label bug that only an independent check like this found.
 """
+
 from __future__ import annotations
 
 import os
@@ -26,26 +27,57 @@ from training.data.question_transforms import (
     transform,
 )
 
-NEGATIVE = re.compile(r"\b(wrong|mistaken|incorrect|an error|NOT|does not apply|lower than|"
-                      r"fall short|negative|is no|Is it wrong)\b")
+NEGATIVE = re.compile(
+    r"\b(wrong|mistaken|incorrect|an error|NOT|does not apply|lower than|"
+    r"fall short|negative|is no|Is it wrong)\b"
+)
 
 
 def _source_rows():
     rows = [
-        Example(kind="choice", state="Arsenal won 3-1 at home.", instructions="Which section?",
-                options=[["World", "international"], ["Sports", "matches"],
-                         ["Business", "markets"], ["Sci/Tech", "science"]], label=1,
-                task="ag_news", instruction_variants=["What is it about?"]),
-        Example(kind="score", state="Great food, slow service.",
-                instructions="How positive is this review?",
-                options=[[str(i), d] for i, d in enumerate(
-                    ["very negative", "negative", "mixed", "positive", "very positive"])],
-                label=2, task="yelp_stars"),
-        Example(kind="noul", state="WIN a FREE cruise, reply now", instructions="Is this spam?",
-                options=[["false", "genuine"], ["true", "promotional"]], label=1, task="spam"),
-        Example(kind="noul", state="Paris is in France.",
-                instructions='Does the state imply "Paris is in Europe"?',
-                options=[["false", "no"], ["true", "yes"]], label=0, task="mnli_entail"),
+        Example(
+            kind="choice",
+            state="Arsenal won 3-1 at home.",
+            instructions="Which section?",
+            options=[
+                ["World", "international"],
+                ["Sports", "matches"],
+                ["Business", "markets"],
+                ["Sci/Tech", "science"],
+            ],
+            label=1,
+            task="ag_news",
+            instruction_variants=["What is it about?"],
+        ),
+        Example(
+            kind="score",
+            state="Great food, slow service.",
+            instructions="How positive is this review?",
+            options=[
+                [str(i), d]
+                for i, d in enumerate(
+                    ["very negative", "negative", "mixed", "positive", "very positive"]
+                )
+            ],
+            label=2,
+            task="yelp_stars",
+        ),
+        Example(
+            kind="noul",
+            state="WIN a FREE cruise, reply now",
+            instructions="Is this spam?",
+            options=[["false", "genuine"], ["true", "promotional"]],
+            label=1,
+            task="spam",
+        ),
+        Example(
+            kind="noul",
+            state="Paris is in France.",
+            instructions='Does the state imply "Paris is in Europe"?',
+            options=[["false", "no"], ["true", "yes"]],
+            label=0,
+            task="mnli_entail",
+        ),
     ]
     path = "data/train_v5.jsonl"
     if os.path.exists(path):  # real rows too, when the corpus has been built

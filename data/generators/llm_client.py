@@ -32,6 +32,7 @@ as given.
 Nothing here reads a key at import time: keys are read when a call is made, so the export
 stage of a generator runs without one.
 """
+
 from __future__ import annotations
 
 import http.client
@@ -63,8 +64,14 @@ BACKENDS = ("openrouter", "bedrock", "bedrock-mantle")
 # verifier still judges in a fresh context, without the writer's answer.
 DEFAULT_MODELS = {
     "openrouter": {"writer": "qwen/qwen3.6-27b", "verifier": "qwen/qwen3.5-397b-a17b"},
-    "bedrock": {"writer": "qwen.qwen3-235b-a22b-2507-v1:0", "verifier": "qwen.qwen3-235b-a22b-2507-v1:0"},
-    "bedrock-mantle": {"writer": "qwen.qwen3-235b-a22b-2507", "verifier": "qwen.qwen3-235b-a22b-2507"},
+    "bedrock": {
+        "writer": "qwen.qwen3-235b-a22b-2507-v1:0",
+        "verifier": "qwen.qwen3-235b-a22b-2507-v1:0",
+    },
+    "bedrock-mantle": {
+        "writer": "qwen.qwen3-235b-a22b-2507",
+        "verifier": "qwen.qwen3-235b-a22b-2507",
+    },
 }
 
 # Per-model defaults for the Bedrock models. A generator's --writer-max-tokens /
@@ -102,14 +109,28 @@ class Truncated(ValueError):
 
 # ---- arguments shared by the generators -------------------------------------------------
 
+
 def add_args(ap) -> None:
-    ap.add_argument("--backend", choices=BACKENDS, default=os.environ.get("HOBSON_LLM_BACKEND", "openrouter"),
-                    help="where the calls go (default: $HOBSON_LLM_BACKEND, else openrouter)")
-    ap.add_argument("--region", default=os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
-                    or "us-west-2", help="AWS region for the bedrock backends")
-    ap.add_argument("--price-in", type=float, default=0.0,
-                    help="USD per million input tokens, for the cost estimate on bedrock (OpenRouter reports its own)")
-    ap.add_argument("--price-out", type=float, default=0.0, help="USD per million output tokens, as --price-in")
+    ap.add_argument(
+        "--backend",
+        choices=BACKENDS,
+        default=os.environ.get("HOBSON_LLM_BACKEND", "openrouter"),
+        help="where the calls go (default: $HOBSON_LLM_BACKEND, else openrouter)",
+    )
+    ap.add_argument(
+        "--region",
+        default=os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-west-2",
+        help="AWS region for the bedrock backends",
+    )
+    ap.add_argument(
+        "--price-in",
+        type=float,
+        default=0.0,
+        help="USD per million input tokens, for the cost estimate on bedrock (OpenRouter reports its own)",
+    )
+    ap.add_argument(
+        "--price-out", type=float, default=0.0, help="USD per million output tokens, as --price-in"
+    )
 
 
 def default_model(args, role: str) -> str:
@@ -131,19 +152,26 @@ def describe(args, models: dict) -> str:
     produced the committed data."""
     recorded = DEFAULT_MODELS["openrouter"]
     same = args.backend == "openrouter" and all(
-        set(m.split(",")) <= {recorded["writer"], recorded["verifier"]} for m in models.values())
+        set(m.split(",")) <= {recorded["writer"], recorded["verifier"]} for m in models.values()
+    )
     where = args.backend + ("" if args.backend == "openrouter" else f" ({args.region})")
     line = f"backend {where}: " + ", ".join(f"{k} {v}" for k, v in models.items())
     if not same:
-        line += (f". NOTE: these are not the models that produced the committed data "
-                 f"(OpenRouter, writer {recorded['writer']}, verifier {recorded['verifier']}); "
-                 f"this run gives new data with its own labels")
+        line += (
+            f". NOTE: these are not the models that produced the committed data "
+            f"(OpenRouter, writer {recorded['writer']}, verifier {recorded['verifier']}); "
+            f"this run gives new data with its own labels"
+        )
     return line
 
 
 def cost_note(args) -> str:
     """How the printed cost was obtained."""
-    return "reported by OpenRouter" if args.backend == "openrouter" else "at the given --price-in/--price-out"
+    return (
+        "reported by OpenRouter"
+        if args.backend == "openrouter"
+        else "at the given --price-in/--price-out"
+    )
 
 
 def check_credentials(args) -> None:
@@ -155,15 +183,21 @@ def check_credentials(args) -> None:
     if os.environ.get("AWS_BEARER_TOKEN_BEDROCK"):
         return
     if args.backend == "bedrock-mantle":
-        raise SystemExit("set AWS_BEARER_TOKEN_BEDROCK (a Bedrock API key; bedrock-mantle takes no other auth here)")
+        raise SystemExit(
+            "set AWS_BEARER_TOKEN_BEDROCK (a Bedrock API key; bedrock-mantle takes no other auth here)"
+        )
     try:
         import botocore.session  # noqa: F401
     except ImportError:
-        raise SystemExit("set AWS_BEARER_TOKEN_BEDROCK (a Bedrock API key), or install botocore "
-                         "to sign with the default AWS credential chain") from None
+        raise SystemExit(
+            "set AWS_BEARER_TOKEN_BEDROCK (a Bedrock API key), or install botocore "
+            "to sign with the default AWS credential chain"
+        ) from None
     if _credentials() is None:
-        raise SystemExit("no AWS credentials found: set AWS_BEARER_TOKEN_BEDROCK, or configure "
-                         "the default credential chain (AWS_PROFILE, a role, ...)")
+        raise SystemExit(
+            "no AWS credentials found: set AWS_BEARER_TOKEN_BEDROCK, or configure "
+            "the default credential chain (AWS_PROFILE, a role, ...)"
+        )
 
 
 # ---- the request ------------------------------------------------------------------------
@@ -202,6 +236,7 @@ def _body(args, model, system, prompt, max_tokens, temperature) -> dict:
 
 def _credentials():
     import botocore.session
+
     return botocore.session.get_session().get_credentials()
 
 
@@ -218,13 +253,15 @@ def _headers(args, url: str, data: bytes) -> dict:
     # SigV4 with the default credential chain; signed per attempt, the signature carries a date
     from botocore.auth import SigV4Auth
     from botocore.awsrequest import AWSRequest
+
     req = AWSRequest(method="POST", url=url, data=data, headers=headers)
     SigV4Auth(_credentials().get_frozen_credentials(), "bedrock", args.region).add_auth(req)
     return dict(req.headers)
 
 
-def chat(args, model: str, system: str, prompt: str, max_tokens: int,
-         temperature: float) -> tuple[str, str]:
+def chat(
+    args, model: str, system: str, prompt: str, max_tokens: int, temperature: float
+) -> tuple[str, str]:
     """One chat completion; returns (answer text, provider). Retries transient failures.
 
     The provider is the host OpenRouter routed to, or "<backend>:<region>" on Bedrock."""
@@ -233,7 +270,9 @@ def chat(args, model: str, system: str, prompt: str, max_tokens: int,
     data = json.dumps(_body(args, model, system, prompt, max_tokens, temperature)).encode()
     delay = 5.0
     for attempt in range(8):
-        req = urllib.request.Request(url, data=data, method="POST", headers=_headers(args, url, data))
+        req = urllib.request.Request(
+            url, data=data, method="POST", headers=_headers(args, url, data)
+        )
         try:
             with urllib.request.urlopen(req, timeout=args.timeout) as r:
                 resp = json.loads(r.read())
@@ -248,14 +287,25 @@ def chat(args, model: str, system: str, prompt: str, max_tokens: int,
             with _lock:
                 USAGE["in"] += u.get("prompt_tokens", 0)
                 USAGE["out"] += u.get("completion_tokens", 0)
-                USAGE["cost"] += float(u.get("cost") or 0) if args.backend == "openrouter" else (
-                    u.get("prompt_tokens", 0) * args.price_in + u.get("completion_tokens", 0) * args.price_out) / 1e6
+                USAGE["cost"] += (
+                    float(u.get("cost") or 0)
+                    if args.backend == "openrouter"
+                    else (
+                        u.get("prompt_tokens", 0) * args.price_in
+                        + u.get("completion_tokens", 0) * args.price_out
+                    )
+                    / 1e6
+                )
                 USAGE["calls"] += 1
             if choice.get("finish_reason") == "length":
                 raise Truncated(f"output truncated at max_tokens={max_tokens}")
             if not text:
                 raise RuntimeError("empty content")
-            provider = resp.get("provider", "?") if args.backend == "openrouter" else f"{args.backend}:{args.region}"
+            provider = (
+                resp.get("provider", "?")
+                if args.backend == "openrouter"
+                else f"{args.backend}:{args.region}"
+            )
             return text, provider
         except Truncated:
             raise
@@ -268,8 +318,15 @@ def chat(args, model: str, system: str, prompt: str, max_tokens: int,
                 raise RuntimeError(f"HTTP {e.code}: {body[:500]!r}") from e
             if busy:
                 delay = max(delay, 60.0)
-        except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException,
-                RuntimeError, KeyError, json.JSONDecodeError):  # HTTPException: IncompleteRead
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            ConnectionError,
+            http.client.HTTPException,
+            RuntimeError,
+            KeyError,
+            json.JSONDecodeError,
+        ):  # HTTPException: IncompleteRead
             if attempt == 7:
                 raise
         time.sleep(delay + random.random() * delay)
@@ -280,5 +337,12 @@ def chat(args, model: str, system: str, prompt: str, max_tokens: int,
 def _with_defaults(args):
     """A namespace with the bedrock fields present, for callers built before add_args."""
     import argparse
-    d = {"backend": "openrouter", "region": "us-west-2", "price_in": 0.0, "price_out": 0.0, **vars(args)}
+
+    d = {
+        "backend": "openrouter",
+        "region": "us-west-2",
+        "price_in": 0.0,
+        "price_out": 0.0,
+        **vars(args),
+    }
     return argparse.Namespace(**d)

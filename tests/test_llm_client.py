@@ -1,5 +1,6 @@
 """The generators' chat client (data/generators/llm_client.py), offline: a fake urlopen captures the
 request and returns canned JSON. No network, no keys beyond the fake ones set here."""
+
 from __future__ import annotations
 
 import argparse
@@ -24,9 +25,11 @@ class FakeResponse(io.BytesIO):
 
 
 def ok(text="ANSWER: yes", finish="stop", usage=None, provider="DeepInfra"):
-    return {"choices": [{"message": {"content": text}, "finish_reason": finish}],
-            "usage": usage or {"prompt_tokens": 10, "completion_tokens": 5, "cost": 0.001},
-            "provider": provider}
+    return {
+        "choices": [{"message": {"content": text}, "finish_reason": finish}],
+        "usage": usage or {"prompt_tokens": 10, "completion_tokens": 5, "cost": 0.001},
+        "provider": provider,
+    }
 
 
 @pytest.fixture
@@ -48,8 +51,12 @@ def transport(monkeypatch):
 
 
 def args(**over):
-    base = {"quantizations": "bf16,fp16,fp32,fp8", "providers": "", "reasoning_effort": "high",
-            "timeout": 9}
+    base = {
+        "quantizations": "bf16,fp16,fp32,fp8",
+        "providers": "",
+        "reasoning_effort": "high",
+        "timeout": 9,
+    }
     base.update(over)
     return argparse.Namespace(**base)
 
@@ -64,10 +71,16 @@ def test_openrouter_request_is_unchanged(transport, monkeypatch):
     assert headers["Authorization"] == "Bearer or-key"
     assert headers["X-title"] == "hobson-gen-pilot"
     assert body["model"] == "qwen/qwen3.6-27b"
-    assert body["messages"] == [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
+    assert body["messages"] == [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "hi"},
+    ]
     assert body["max_tokens"] == 100 and body["temperature"] == 0.7 and body["top_p"] == 0.95
     assert body["usage"] == {"include": True}
-    assert body["provider"] == {"quantizations": ["bf16", "fp16", "fp32", "fp8"], "allow_fallbacks": True}
+    assert body["provider"] == {
+        "quantizations": ["bf16", "fp16", "fp32", "fp8"],
+        "allow_fallbacks": True,
+    }
     assert body["reasoning"] == {"effort": "high", "exclude": True}
     assert llm.USAGE == {"in": 10, "out": 5, "calls": 1, "cost": 0.001}
 
@@ -77,8 +90,11 @@ def test_openrouter_pinned_providers_and_no_reasoning(transport, monkeypatch):
     transport.replies.append(ok())
     llm.chat(args(providers="Venice,Chutes", reasoning_effort="none"), "m", "s", "p", 10, 0.1)
     body = transport.sent[0][2]
-    assert body["provider"] == {"quantizations": ["bf16", "fp16", "fp32", "fp8"],
-                                "allow_fallbacks": False, "order": ["Venice", "Chutes"]}
+    assert body["provider"] == {
+        "quantizations": ["bf16", "fp16", "fp32", "fp8"],
+        "allow_fallbacks": False,
+        "order": ["Venice", "Chutes"],
+    }
     assert "reasoning" not in body
 
 
@@ -92,7 +108,9 @@ def test_retries_429_then_succeeds(transport, monkeypatch):
 
 def test_400_is_not_retried(transport, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
-    transport.replies.append(urllib.error.HTTPError("u", 400, "bad", {}, io.BytesIO(b"no such model")))
+    transport.replies.append(
+        urllib.error.HTTPError("u", 400, "bad", {}, io.BytesIO(b"no such model"))
+    )
     with pytest.raises(RuntimeError, match="HTTP 400"):
         llm.chat(args(), "m", "s", "p", 10, 0.1)
     assert len(transport.sent) == 1
@@ -108,9 +126,12 @@ def test_truncation_raises_after_counting_usage(transport, monkeypatch):
 
 # ---- bedrock and bedrock-mantle ---------------------------------------------------------
 
+
 def bedrock_reply():
-    return {"choices": [{"message": {"content": "ANSWER: no"}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 1000, "completion_tokens": 500}}
+    return {
+        "choices": [{"message": {"content": "ANSWER: no"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1000, "completion_tokens": 500},
+    }
 
 
 def test_bedrock_runtime_request(transport, monkeypatch):
@@ -124,9 +145,14 @@ def test_bedrock_runtime_request(transport, monkeypatch):
     assert url == "https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1/chat/completions"
     assert headers["Authorization"] == "Bearer bedrock-key"
     assert "X-title" not in headers
-    assert body == {"model": "qwen.qwen3-32b-v1:0", "max_tokens": 8000, "temperature": 0.7, "top_p": 0.95,
-                    "reasoning_effort": "high",
-                    "messages": [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]}
+    assert body == {
+        "model": "qwen.qwen3-32b-v1:0",
+        "max_tokens": 8000,
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "reasoning_effort": "high",
+        "messages": [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}],
+    }
     for k in ("usage", "provider", "reasoning"):
         assert k not in body
     # cost from the given prices: 1000 in at $1/M plus 500 out at $4/M
@@ -136,7 +162,13 @@ def test_bedrock_runtime_request(transport, monkeypatch):
 def test_bedrock_mantle_request_and_no_reasoning(transport, monkeypatch):
     monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "bedrock-key")
     transport.replies.append(bedrock_reply())
-    a = args(backend="bedrock-mantle", region="eu-west-1", reasoning_effort="none", price_in=0.0, price_out=0.0)
+    a = args(
+        backend="bedrock-mantle",
+        region="eu-west-1",
+        reasoning_effort="none",
+        price_in=0.0,
+        price_out=0.0,
+    )
     _, provider = llm.chat(a, "qwen.qwen3-32b", "s", "p", 8000, 0.5)
     url, headers, body = transport.sent[0]
     assert url == "https://bedrock-mantle.eu-west-1.api.aws/v1/chat/completions"
@@ -172,25 +204,64 @@ def test_inline_reasoning_block_is_stripped_on_bedrock(transport, monkeypatch):
     """bedrock-runtime returns Qwen3 32B's thinking inline, as <reasoning>...</reasoning> before
     the answer; callers get the answer alone, as OpenRouter's exclude gives it."""
     monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "k")
-    thought = "<reasoning>\nLet me think {\"policy\": \"not this\"}...\n</reasoning>\n\n{\"policy\": \"this\"}"
-    transport.replies.append(bedrock_reply() | {"choices": [{"message": {"content": thought}, "finish_reason": "stop"}]})
+    thought = (
+        '<reasoning>\nLet me think {"policy": "not this"}...\n</reasoning>\n\n{"policy": "this"}'
+    )
+    transport.replies.append(
+        bedrock_reply() | {"choices": [{"message": {"content": thought}, "finish_reason": "stop"}]}
+    )
     a = args(backend="bedrock", region="us-west-2", price_in=0.0, price_out=0.0)
     assert llm.chat(a, "qwen.qwen3-32b-v1:0", "s", "p", 8000, 0.7)[0] == '{"policy": "this"}'
     # whitespace ahead of the block is still a leading block
-    transport.replies.append(bedrock_reply() | {"choices": [{"message": {"content": "\n  <reasoning>x</reasoning>\nANSWER: no"},
-                                                             "finish_reason": "stop"}]})
+    transport.replies.append(
+        bedrock_reply()
+        | {
+            "choices": [
+                {
+                    "message": {"content": "\n  <reasoning>x</reasoning>\nANSWER: no"},
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+    )
     assert llm.chat(a, "qwen.qwen3-32b-v1:0", "s", "p", 8000, 0.7)[0] == "ANSWER: no"
     # the strip ends at the first closing tag; a later one is content
-    transport.replies.append(bedrock_reply() | {"choices": [{"message": {"content": "<reasoning>x</reasoning>ANSWER: yes </reasoning> tail"},
-                                                             "finish_reason": "stop"}]})
-    assert llm.chat(a, "qwen.qwen3-32b-v1:0", "s", "p", 8000, 0.7)[0] == "ANSWER: yes </reasoning> tail"
+    transport.replies.append(
+        bedrock_reply()
+        | {
+            "choices": [
+                {
+                    "message": {"content": "<reasoning>x</reasoning>ANSWER: yes </reasoning> tail"},
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+    )
+    assert (
+        llm.chat(a, "qwen.qwen3-32b-v1:0", "s", "p", 8000, 0.7)[0]
+        == "ANSWER: yes </reasoning> tail"
+    )
     # only a leading block is thinking; the same tag later in an answer is content
-    transport.replies.append(bedrock_reply() | {"choices": [{"message": {"content": "ANSWER: yes <reasoning>x</reasoning>"},
-                                                             "finish_reason": "stop"}]})
-    assert llm.chat(a, "qwen.qwen3-32b-v1:0", "s", "p", 8000, 0.7)[0] == "ANSWER: yes <reasoning>x</reasoning>"
+    transport.replies.append(
+        bedrock_reply()
+        | {
+            "choices": [
+                {
+                    "message": {"content": "ANSWER: yes <reasoning>x</reasoning>"},
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+    )
+    assert (
+        llm.chat(a, "qwen.qwen3-32b-v1:0", "s", "p", 8000, 0.7)[0]
+        == "ANSWER: yes <reasoning>x</reasoning>"
+    )
     # a thinking block cut off by max_tokens is still a truncation
-    transport.replies.append(bedrock_reply() | {"choices": [{"message": {"content": "<reasoning>\nendless"},
-                                                             "finish_reason": "length"}]})
+    transport.replies.append(
+        bedrock_reply()
+        | {"choices": [{"message": {"content": "<reasoning>\nendless"}, "finish_reason": "length"}]}
+    )
     with pytest.raises(llm.Truncated):
         llm.chat(a, "qwen.qwen3-32b-v1:0", "s", "p", 8000, 0.7)
     # OpenRouter content is passed through untouched
@@ -220,24 +291,39 @@ def test_defaults_per_backend_and_max_tokens_by_model():
     assert llm.default_model(args(backend="openrouter"), "writer") == "qwen/qwen3.6-27b"
     assert llm.default_model(args(backend="openrouter"), "checker") == "qwen/qwen3.5-397b-a17b"
     assert llm.default_model(args(backend="bedrock"), "writer") == "qwen.qwen3-235b-a22b-2507-v1:0"
-    assert llm.default_model(args(backend="bedrock"), "verifier") == "qwen.qwen3-235b-a22b-2507-v1:0"
-    assert llm.default_model(args(backend="bedrock-mantle"), "writer") == "qwen.qwen3-235b-a22b-2507"
-    assert llm.default_model(args(backend="bedrock-mantle"), "verifier") == "qwen.qwen3-235b-a22b-2507"
+    assert (
+        llm.default_model(args(backend="bedrock"), "verifier") == "qwen.qwen3-235b-a22b-2507-v1:0"
+    )
+    assert (
+        llm.default_model(args(backend="bedrock-mantle"), "writer") == "qwen.qwen3-235b-a22b-2507"
+    )
+    assert (
+        llm.default_model(args(backend="bedrock-mantle"), "verifier") == "qwen.qwen3-235b-a22b-2507"
+    )
     # the flag wins; then the table; then the generator's own default
     assert llm.max_tokens("qwen.qwen3-32b-v1:0", 12345, 32000) == 12345
     assert llm.max_tokens("qwen.qwen3-32b-v1:0", None, 32000) == 8000
     assert llm.max_tokens("qwen/qwen3.6-27b", None, 32000) == 32000
-    assert llm.max_tokens("qwen/qwen3.5-397b-a17b,qwen.qwen3-235b-a22b-2507-v1:0", None, 16000) == 8000
+    assert (
+        llm.max_tokens("qwen/qwen3.5-397b-a17b,qwen.qwen3-235b-a22b-2507-v1:0", None, 16000) == 8000
+    )
 
 
 def test_describe_flags_models_other_than_the_recorded_ones():
-    same = llm.describe(args(backend="openrouter"), {"writer": "qwen/qwen3.6-27b", "verifiers": "qwen/qwen3.5-397b-a17b"})
+    same = llm.describe(
+        args(backend="openrouter"),
+        {"writer": "qwen/qwen3.6-27b", "verifiers": "qwen/qwen3.5-397b-a17b"},
+    )
     assert same.startswith("backend openrouter: writer qwen/qwen3.6-27b") and "NOTE" not in same
-    other = llm.describe(args(backend="bedrock", region="us-east-1"),
-                         {"writer": "qwen.qwen3-32b-v1:0", "verifiers": "qwen.qwen3-235b-a22b-2507-v1:0"})
+    other = llm.describe(
+        args(backend="bedrock", region="us-east-1"),
+        {"writer": "qwen.qwen3-32b-v1:0", "verifiers": "qwen.qwen3-235b-a22b-2507-v1:0"},
+    )
     assert other.startswith("backend bedrock (us-east-1): writer qwen.qwen3-32b-v1:0")
     assert "not the models that produced the committed data" in other
-    assert "NOTE" in llm.describe(args(backend="openrouter"), {"writer": "qwen/qwen3.6-27b", "verifiers": "other/model"})
+    assert "NOTE" in llm.describe(
+        args(backend="openrouter"), {"writer": "qwen/qwen3.6-27b", "verifiers": "other/model"}
+    )
 
 
 def test_add_args_reads_the_environment(monkeypatch):
@@ -246,7 +332,12 @@ def test_add_args_reads_the_environment(monkeypatch):
     ap = argparse.ArgumentParser()
     llm.add_args(ap)
     a = ap.parse_args([])
-    assert (a.backend, a.region, a.price_in, a.price_out) == ("bedrock-mantle", "ap-southeast-2", 0.0, 0.0)
+    assert (a.backend, a.region, a.price_in, a.price_out) == (
+        "bedrock-mantle",
+        "ap-southeast-2",
+        0.0,
+        0.0,
+    )
     a = ap.parse_args(["--backend", "openrouter", "--region", "us-east-2", "--price-in", "0.2"])
     assert (a.backend, a.region, a.price_in) == ("openrouter", "us-east-2", 0.2)
 
@@ -267,6 +358,7 @@ def test_region_falls_back_to_us_west_2(monkeypatch):
 
 # ---- a generator end to end, offline ------------------------------------------------------
 
+
 def test_flips_generator_records_backend_model_and_provider(transport, monkeypatch, tmp_path):
     """gen_flips_openrouter.py on the fake transport: writer and verifier rows carry the
     backend, the model and the provider, and the export stage still runs."""
@@ -274,32 +366,76 @@ def test_flips_generator_records_backend_model_and_provider(transport, monkeypat
 
     monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "k")
     spec = gf.spec_for(0, 0)
-    doc = {"title": "T", "policy": " ".join(["clause"] * 200), "items": [
-        {"flip": f, "case": "c", "question": "Is it permitted?", "criteria": {"yes": "y", "no": "n"},
-         "answer_a": a, "answer_b": "no" if a == "yes" else "yes", "rationale": "r"}
-        for f, a in zip(spec["flips"], spec["ans_a"], strict=True)]}
+    doc = {
+        "title": "T",
+        "policy": " ".join(["clause"] * 200),
+        "items": [
+            {
+                "flip": f,
+                "case": "c",
+                "question": "Is it permitted?",
+                "criteria": {"yes": "y", "no": "n"},
+                "answer_a": a,
+                "answer_b": "no" if a == "yes" else "yes",
+                "rationale": "r",
+            }
+            for f, a in zip(spec["flips"], spec["ans_a"], strict=True)
+        ],
+    }
 
     def fake_urlopen(req, timeout=None):
         body = json.loads(req.data)
         transport.sent.append((req.full_url, dict(req.header_items()), body))
         writer = body["messages"][0]["content"] == gf.SYSTEM_WRITER
-        return FakeResponse(json.dumps(bedrock_reply() | {"choices": [{
-            "message": {"content": json.dumps(doc) if writer else "ANSWER: yes"}, "finish_reason": "stop"}]}).encode())
+        return FakeResponse(
+            json.dumps(
+                bedrock_reply()
+                | {
+                    "choices": [
+                        {
+                            "message": {"content": json.dumps(doc) if writer else "ANSWER: yes"},
+                            "finish_reason": "stop",
+                        }
+                    ]
+                }
+            ).encode()
+        )
 
     monkeypatch.setattr(llm.urllib.request, "urlopen", fake_urlopen)
-    monkeypatch.setattr(sys, "argv", ["gen_flips", "--backend", "bedrock", "--region", "us-east-2",
-                                      "--out", str(tmp_path), "--batches", "1", "--workers", "2"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "gen_flips",
+            "--backend",
+            "bedrock",
+            "--region",
+            "us-east-2",
+            "--out",
+            str(tmp_path),
+            "--batches",
+            "1",
+            "--workers",
+            "2",
+        ],
+    )
     gf.main()
     batches = [json.loads(line) for line in (tmp_path / "batches.jsonl").read_text().splitlines()]
     verify = [json.loads(line) for line in (tmp_path / "verify.jsonl").read_text().splitlines()]
     assert len(batches) == 1 and len(verify) == 3 * 2 * 2  # 3 items, 2 variants, 2 judgements
     assert {(b["backend"], b["writer"], b["provider"]) for b in batches} == {
-        ("bedrock", "qwen.qwen3-235b-a22b-2507-v1:0", "bedrock:us-east-2")}
+        ("bedrock", "qwen.qwen3-235b-a22b-2507-v1:0", "bedrock:us-east-2")
+    }
     assert {(v["backend"], v["model"], v["provider"]) for v in verify} == {
-        ("bedrock", "qwen.qwen3-235b-a22b-2507-v1:0", "bedrock:us-east-2")}
+        ("bedrock", "qwen.qwen3-235b-a22b-2507-v1:0", "bedrock:us-east-2")
+    }
     # the model table capped both roles at 8000 without a flag and dropped reasoning_effort
     # (the generator's default, high): the default models do not think
-    assert {(b["model"], b["max_tokens"], b.get("reasoning_effort")) for _, _, b in transport.sent} == {
-        ("qwen.qwen3-235b-a22b-2507-v1:0", 8000, None)}
-    assert all(u.startswith("https://bedrock-runtime.us-east-2.amazonaws.com/openai/v1/") for u, _, _ in transport.sent)
+    assert {
+        (b["model"], b["max_tokens"], b.get("reasoning_effort")) for _, _, b in transport.sent
+    } == {("qwen.qwen3-235b-a22b-2507-v1:0", 8000, None)}
+    assert all(
+        u.startswith("https://bedrock-runtime.us-east-2.amazonaws.com/openai/v1/")
+        for u, _, _ in transport.sent
+    )
     assert (tmp_path / "gen_train.jsonl").exists() and (tmp_path / "stats.json").exists()

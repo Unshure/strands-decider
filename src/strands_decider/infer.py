@@ -28,6 +28,7 @@ from typing import Any, cast
 
 import torch
 
+from . import __version__
 from .modeling import StrandsDeciderModel, apply_temperature, masked_log_softmax, pool_last_token
 from .prompting import (
     RenderedQuestion,
@@ -58,7 +59,7 @@ class EngineConfig:
     device: str = "cuda"
     use_prefix_cache: bool = True
     max_batch: int = 32
-    model_name: str = "strands-decider-0.1.0"
+    model_name: str = f"strands-decider-{__version__}"
     # Largest share of the context window the question may claim before the state
     # starts being squeezed. Questions are normally short, so this rarely binds.
     max_question_fraction: float = 0.75
@@ -127,8 +128,10 @@ def is_cuda_fatal(exc: BaseException) -> bool:
     illegal address): every later call on the device fails the same way."""
     msg = str(exc)
     return (
-        "device-side assert" in msg or "illegal memory access" in msg
-        or "CUDA error" in msg or "cudaError" in msg
+        "device-side assert" in msg
+        or "illegal memory access" in msg
+        or "CUDA error" in msg
+        or "cudaError" in msg
     )
 
 
@@ -146,8 +149,12 @@ def tuned_token_cap(rows_by_width: dict[int, int] | None, width: int) -> int | N
 
 
 def plan_rows(
-    lengths: Sequence[int], max_tokens: int, max_rows: int, quadratic_cap: int | None = None,
-    pad_slack: float | None = None, pad_free: int = 0,
+    lengths: Sequence[int],
+    max_tokens: int,
+    max_rows: int,
+    quadratic_cap: int | None = None,
+    pad_slack: float | None = None,
+    pad_free: int = 0,
     rows_by_width: dict[int, int] | None = None,
 ) -> list[list[int]]:
     """Group row indices into forwards, shortest first so rows of like length pad together.
@@ -165,11 +172,17 @@ def plan_rows(
     for i in order:
         w, r = lengths[i], len(cur) + 1
         padded = r * w
-        if cur and (r > max_rows or padded > max_tokens
-                    or (quadratic_cap is not None and r * w * w > quadratic_cap)
-                    or (pad_slack is not None and padded > pad_free
-                        and padded > (1.0 + pad_slack) * (real + w))
-                    or (rows_by_width and padded > max(w, tuned_token_cap(rows_by_width, w) or 0))):
+        if cur and (
+            r > max_rows
+            or padded > max_tokens
+            or (quadratic_cap is not None and r * w * w > quadratic_cap)
+            or (
+                pad_slack is not None
+                and padded > pad_free
+                and padded > (1.0 + pad_slack) * (real + w)
+            )
+            or (rows_by_width and padded > max(w, tuned_token_cap(rows_by_width, w) or 0))
+        ):
             groups.append(cur)
             cur, real = [], 0
         cur.append(i)
@@ -219,15 +232,26 @@ def _fork_layered_cache(cache: Any, n: int) -> Any:
                 if name in _SHARED_TENSORS and v.dim() == 0:
                     continue  # per-layer, not per-row: every fork keeps it as it is
                 if not is_state:
-                    raise UnforkableCache(f"cache layer {type(layer).__name__} holds tensor {name!r}")
+                    raise UnforkableCache(
+                        f"cache layer {type(layer).__name__} holds tensor {name!r}"
+                    )
                 if v.numel():
                     setattr(nl, name, v.expand(n, *v.shape[1:]).contiguous())
             elif isinstance(v, dict):
                 if any(isinstance(t, torch.Tensor) for t in v.values()) and not is_state:
-                    raise UnforkableCache(f"cache layer {type(layer).__name__} holds tensors in {name!r}")
-                setattr(nl, name, {k: t.expand(n, *t.shape[1:]).contiguous()
-                                   if isinstance(t, torch.Tensor) and t.numel() else t
-                                   for k, t in v.items()})
+                    raise UnforkableCache(
+                        f"cache layer {type(layer).__name__} holds tensors in {name!r}"
+                    )
+                setattr(
+                    nl,
+                    name,
+                    {
+                        k: t.expand(n, *t.shape[1:]).contiguous()
+                        if isinstance(t, torch.Tensor) and t.numel()
+                        else t
+                        for k, t in v.items()
+                    },
+                )
         fork.layers.append(nl)
     return fork
 
@@ -303,7 +327,6 @@ class SystemOneEngine:
             dtype=torch.float32,
         )
 
-
     def _fit(
         self, state_text: str, question_texts: list[str]
     ) -> tuple[list[int], list[list[int]], list[list[tuple[int, int]]]]:
@@ -328,8 +351,7 @@ class SystemOneEngine:
         """
         max_len = self.model.config.max_length
         with self._tok_lock:
-            enc = self.tok(question_texts, add_special_tokens=False,
-                           return_offsets_mapping=True)
+            enc = self.tok(question_texts, add_special_tokens=False, return_offsets_mapping=True)
             q = enc["input_ids"]
             offs = enc["offset_mapping"]
             longest = max(len(x) for x in q)
@@ -358,7 +380,9 @@ class SystemOneEngine:
         return s, q, kept
 
     def _option_idx(
-        self, rendered: list[RenderedQuestion], base: int,
+        self,
+        rendered: list[RenderedQuestion],
+        base: int,
         offsets: list[list[tuple[int, int]]],
     ) -> torch.Tensor:
         """Option token positions for a pointer head, offset by `base`.
@@ -377,7 +401,8 @@ class SystemOneEngine:
 
     @staticmethod
     def _host_option_positions(
-        rendered: Sequence[RenderedQuestion], offsets: Sequence[Sequence[Any]],
+        rendered: Sequence[RenderedQuestion],
+        offsets: Sequence[Sequence[Any]],
     ) -> list[list[int]]:
         """`_option_idx`'s positions as host lists, question-relative (no `base`)."""
         return [
@@ -389,9 +414,7 @@ class SystemOneEngine:
         """Right-pad to a rectangle; pool_last_token finds the last real token by mask."""
         pad_id = self.tok.pad_token_id if self.tok.pad_token_id is not None else 0
         width = max(len(x) for x in seqs)
-        ids = torch.tensor(
-            [x + [pad_id] * (width - len(x)) for x in seqs], device=self.device
-        )
+        ids = torch.tensor([x + [pad_id] * (width - len(x)) for x in seqs], device=self.device)
         mask = torch.tensor(
             [[1] * len(x) + [0] * (width - len(x)) for x in seqs], device=self.device
         )
@@ -401,8 +424,11 @@ class SystemOneEngine:
 
     @torch.inference_mode()  # type: ignore[untyped-decorator]
     def _slot_probs_batched(
-        self, s: list[int], q: list[list[int]],
-        n_slots: list[int], kinds: list[str],
+        self,
+        s: list[int],
+        q: list[list[int]],
+        n_slots: list[int],
+        kinds: list[str],
         offsets: list[list[tuple[int, int]]],
         rendered: list[RenderedQuestion] | None = None,
     ) -> tuple[torch.Tensor, int]:
@@ -416,9 +442,8 @@ class SystemOneEngine:
         """
         ids, mask = self._pad([s + qi for qi in q])
         # This path forwards the whole prompt, so option positions sit after the state.
-        assert rendered is not None or self.model.config.head_type != "pointer"
-        opt_idx = (self._option_idx(rendered, len(s), offsets)  # type: ignore[arg-type]
-                   if self.model.config.head_type == "pointer" else None)
+        assert rendered is not None
+        opt_idx = self._option_idx(rendered, len(s), offsets)
         out = self.model(
             input_ids=ids,
             attention_mask=mask,
@@ -471,16 +496,13 @@ class SystemOneEngine:
         # last real *suffix* token -- which is `<answer>`, the position that has
         # attended to state and question alike.
         pooled = pool_last_token(hidden, full_mask).to(torch.float32)
-        if self.model.config.head_type == "pointer":
-            # `hidden` is the suffix only, so option positions are suffix-relative and
-            # need no prefix offset -- the cached state never enters the gather.
-            from .modeling import gather_options
+        # `hidden` is the suffix only, so option positions are suffix-relative and
+        # need no prefix offset -- the cached state never enters the gather.
+        from .modeling import gather_options
 
-            assert rendered is not None
-            options = gather_options(hidden, self._option_idx(rendered, 0, offsets))
-            raw = self.model.head(pooled, options.to(torch.float32))
-        else:
-            raw = self.model.head(pooled)
+        assert rendered is not None
+        options = gather_options(hidden, self._option_idx(rendered, 0, offsets))
+        raw = self.model.head(pooled, options.to(torch.float32))
         logits = apply_temperature(raw, self._temperatures(kinds))
         log_probs = masked_log_softmax(logits, torch.tensor(n_slots, device=self.device))
         n_tokens = prefix_len + int(suffix_mask.sum().item())
@@ -494,21 +516,7 @@ class SystemOneEngine:
         names = list(request.questions.keys())
         questions: list[Question] = [request.questions[n] for n in names]
 
-        rendered: list[RenderedQuestion] = []
-        for q in questions:
-            rq = render_question(q)
-            # A pointer head scores each option from its own hidden state, so there is
-            # no slot count to exceed; only the fixed-width readout has a ceiling.
-            if (
-                self.model.config.head_type != "pointer"
-                and rq.n_slots > self.model.config.num_slots
-            ):
-                raise ValueError(
-                    f"question has {rq.n_slots} options but this model has "
-                    f"{self.model.config.num_slots} slots; split the question or "
-                    f"retrain with a larger num_slots"
-                )
-            rendered.append(rq)
+        rendered: list[RenderedQuestion] = [render_question(q) for q in questions]
         return names, rendered
 
     def evaluate(self, request: SystemOneRequest) -> SystemOneResponse:
@@ -528,20 +536,33 @@ class SystemOneEngine:
             # One question gains nothing from a shared prefix and pays a second forward:
             # measured on JevBench (one question per task), p50 0.111 s batched, 0.204 s
             # through the prefix path, with the same answers.
-            if (self.cfg.use_prefix_cache and not self._prefix_cache_unforkable
-                    and len(chunk_rendered) > 1):
+            if (
+                self.cfg.use_prefix_cache
+                and not self._prefix_cache_unforkable
+                and len(chunk_rendered) > 1
+            ):
                 try:
                     probs, ntok = self._slot_probs_shared_prefix(
-                        state_ids, question_ids, chunk_slots, chunk_kinds, offsets,
+                        state_ids,
+                        question_ids,
+                        chunk_slots,
+                        chunk_kinds,
+                        offsets,
                         rendered=chunk_rendered,
                     )
                     total_tokens += ntok
                 except UnforkableCache as e:
-                    print(f"[strands-decider] shared-prefix cache disabled ({e}); using batched encoding")
+                    print(
+                        f"[strands-decider] shared-prefix cache disabled ({e}); using batched encoding"
+                    )
                     self._prefix_cache_unforkable = True
             if probs is None:
                 probs, ntok = self._slot_probs_batched(
-                    state_ids, question_ids, chunk_slots, chunk_kinds, offsets,
+                    state_ids,
+                    question_ids,
+                    chunk_slots,
+                    chunk_kinds,
+                    offsets,
                     rendered=chunk_rendered,
                 )
                 total_tokens += ntok
@@ -601,8 +622,10 @@ class SystemOneEngine:
         """Whether this engine scores rows with the base class's own forward (not MLX or
         vision, which override the low-level paths and so always run requests alone)."""
         cls = type(self)
-        return (cls._slot_probs_batched is SystemOneEngine._slot_probs_batched
-                and cls.evaluate is SystemOneEngine.evaluate)
+        return (
+            cls._slot_probs_batched is SystemOneEngine._slot_probs_batched
+            and cls.evaluate is SystemOneEngine.evaluate
+        )
 
     def prepare(self, request: SystemOneRequest) -> PreparedRequest:
         """Host-side preparation of one request for `evaluate_prepared` (no device work)."""
@@ -611,18 +634,25 @@ class SystemOneEngine:
         names, rendered = self._render(request)
         state_text = render_state(request.state)
         chunks = self._chunks(state_text, rendered)
-        if (self.cfg.use_prefix_cache and not self._prefix_cache_unforkable
-                and any(c.stop - c.start > 1 for c, *_ in chunks)):
+        if (
+            self.cfg.use_prefix_cache
+            and not self._prefix_cache_unforkable
+            and any(c.stop - c.start > 1 for c, *_ in chunks)
+        ):
             return PreparedRequest(request, names, rendered, None)  # shared-prefix path
         pointer = self.model.config.head_type == "pointer"
         rows: list[PreparedRow] = []
         for chunk, s, q, offsets in chunks:
             chunk_rendered = rendered[chunk]
-            pos = (self._host_option_positions(chunk_rendered, offsets) if pointer
-                   else [[] for _ in q])
+            pos = (
+                self._host_option_positions(chunk_rendered, offsets) if pointer else [[] for _ in q]
+            )
             for rq, qi, p in zip(chunk_rendered, q, pos, strict=True):
-                rows.append(PreparedRow(ids=s + qi, opt=[len(s) + i for i in p],
-                                        n_slots=rq.n_slots, kind=rq.kind))
+                rows.append(
+                    PreparedRow(
+                        ids=s + qi, opt=[len(s) + i for i in p], n_slots=rq.n_slots, kind=rq.kind
+                    )
+                )
         return PreparedRequest(request, names, rendered, rows)
 
     @torch.inference_mode()  # type: ignore[untyped-decorator]
@@ -633,8 +663,11 @@ class SystemOneEngine:
         opt_idx = None
         if self.model.config.head_type == "pointer":
             width = max(len(r.opt) for r in rows)
-            opt_idx = torch.tensor([r.opt + [-1] * (width - len(r.opt)) for r in rows],
-                                   dtype=torch.long, device=self.device)
+            opt_idx = torch.tensor(
+                [r.opt + [-1] * (width - len(r.opt)) for r in rows],
+                dtype=torch.long,
+                device=self.device,
+            )
         out = self.model(
             input_ids=ids,
             attention_mask=mask,
@@ -650,8 +683,9 @@ class SystemOneEngine:
             return None
         return int(self.model.config.max_length) ** 2
 
-    def tune_batching(self, widths: Sequence[int] = (256, 1024, 4096), reps: int = 2,
-                      gain: float = 1.05) -> dict[int, int]:
+    def tune_batching(
+        self, widths: Sequence[int] = (256, 1024, 4096), reps: int = 2, gain: float = 1.05
+    ) -> dict[int, int]:
         """Measure, for synthetic rows of each width, the rows per forward with the best rows/s
         (k = 1, 2, 4, ... within the budgets; a larger k must gain `gain`x, and the search stops
         once rows/s falls or a forward runs out of memory), and keep them in
@@ -670,8 +704,9 @@ class SystemOneEngine:
                 continue
             row = PreparedRow(ids=[tid] * w, opt=[w - 3, w - 2], n_slots=2, kind="choice")
             best_k, best_rate, k = 1, 0.0, 1
-            while k <= self.cfg.batch_rows and (k == 1 or (
-                    k * w <= self.cfg.batch_tokens and (quad is None or k * w * w <= quad))):
+            while k <= self.cfg.batch_rows and (
+                k == 1 or (k * w <= self.cfg.batch_tokens and (quad is None or k * w * w <= quad))
+            ):
                 rows = [row] * k
                 try:
                     self._forward_rows(rows)  # warm-up for this shape
@@ -696,8 +731,7 @@ class SystemOneEngine:
         self.cfg.batch_rows_by_width = out
         return out
 
-    def _score_rows(self, rows: Sequence[PreparedRow], group: list[int],
-                    out: list[Any]) -> None:
+    def _score_rows(self, rows: Sequence[PreparedRow], group: list[int], out: list[Any]) -> None:
         """Score `group` (indices into rows) into `out`: a probability row or an exception
         per row. On CUDA OOM the group is split in halves (a single row that still fails
         gets the OOM); a CUDA error that loses the context fails the whole group; any other
@@ -746,10 +780,15 @@ class SystemOneEngine:
             flat.extend(p.rows)
         if flat:
             scored: list[Any] = [None] * len(flat)
-            groups = plan_rows([len(r.ids) for r in flat], self.cfg.batch_tokens,
-                               self.cfg.batch_rows, self._quadratic_cap(),
-                               self.cfg.batch_pad_slack, self.cfg.batch_pad_free,
-                               self.cfg.batch_rows_by_width)
+            groups = plan_rows(
+                [len(r.ids) for r in flat],
+                self.cfg.batch_tokens,
+                self.cfg.batch_rows,
+                self._quadratic_cap(),
+                self.cfg.batch_pad_slack,
+                self.cfg.batch_pad_free,
+                self.cfg.batch_rows_by_width,
+            )
             fatal: BaseException | None = None
             for group in groups:
                 if fatal is not None:  # the context is gone; do not launch more work
@@ -757,13 +796,19 @@ class SystemOneEngine:
                         scored[i] = fatal
                     continue
                 self._score_rows(flat, group, scored)
-                fatal = next((scored[i] for i in group if isinstance(scored[i], BaseException)
-                              and is_cuda_fatal(scored[i])), None)
+                fatal = next(
+                    (
+                        scored[i]
+                        for i in group
+                        if isinstance(scored[i], BaseException) and is_cuda_fatal(scored[i])
+                    ),
+                    None,
+                )
             start = 0
             for k, p in enumerate(prepared):
                 if p.rows is None:
                     continue
-                mine = scored[start:start + len(p.rows)]
+                mine = scored[start : start + len(p.rows)]
                 start += len(p.rows)
                 err = next((x for x in mine if isinstance(x, BaseException)), None)
                 if err is not None:
@@ -772,7 +817,8 @@ class SystemOneEngine:
                 answers: dict[str, Answer] = {}
                 for name, rq, row in zip(p.names, p.rendered, mine, strict=True):
                     answers[name] = _to_answer(
-                        rq, row[: rq.n_slots].tolist(),
+                        rq,
+                        row[: rq.n_slots].tolist(),
                         ordinal_smoothing=self.model.config.ordinal_smoothing,
                     )
                 results[k] = SystemOneResponse(
@@ -836,9 +882,7 @@ def _to_answer(
         probabilities={k: round(v, 4) for k, v in ordered.items()},
         # Ordinal confidence, not max-probability: see derive_score_confidence.
         confidence=round(
-            derive_score_confidence(
-                list(ordered.values()), ordinal_smoothing=ordinal_smoothing
-            ),
+            derive_score_confidence(list(ordered.values()), ordinal_smoothing=ordinal_smoothing),
             4,
         ),
     )
@@ -856,9 +900,7 @@ def load_engine(
     if device == "mlx":
         return load_mlx(checkpoint, EngineConfig(device="mlx", use_prefix_cache=use_prefix_cache))
     model = StrandsDeciderModel.load(checkpoint, attn_implementation=attn_implementation)
-    return SystemOneEngine(
-        model, EngineConfig(device=device, use_prefix_cache=use_prefix_cache)
-    )
+    return SystemOneEngine(model, EngineConfig(device=device, use_prefix_cache=use_prefix_cache))
 
 
 def mlx_available() -> bool:

@@ -17,7 +17,9 @@ from strands_decider.mps_kernels import (  # noqa: E402
 )
 
 DEVICES = ["cpu"] + (["mps"] if torch.backends.mps.is_available() else [])
-reference = getattr(q35.torch_chunk_gated_delta_rule, "__wrapped__", q35.torch_chunk_gated_delta_rule)
+reference = getattr(
+    q35.torch_chunk_gated_delta_rule, "__wrapped__", q35.torch_chunk_gated_delta_rule
+)
 
 
 def _inputs(seq: int, device: str, heads: int = 4, dim: int = 32, batch: int = 2):
@@ -85,8 +87,11 @@ def test_install_routes_only_mps():
     assert torch.equal(out, ref)
 
 
-@pytest.mark.parametrize(("triton", "wrapped"), [(False, True), (True, False)],
-                         ids=["fla-without-triton", "fla-with-triton"])
+@pytest.mark.parametrize(
+    ("triton", "wrapped"),
+    [(False, True), (True, False)],
+    ids=["fla-without-triton", "fla-with-triton"],
+)
 def test_install_defers_to_fla_only_when_it_can_run(monkeypatch, triton, wrapped):
     import importlib.util
 

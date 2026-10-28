@@ -33,25 +33,41 @@ def repo(tmp_path):
 
 
 def run(repo, *stages, **env):
-    e = {**os.environ, "PY": "python", "S3_PREFIX": "none", "NGPU": "1",
-         "RUN_DIR": str(repo / "run"), **env}
-    return subprocess.run(["bash", RUNNER, *stages], cwd=repo, env=e, capture_output=True, text=True)
+    e = {
+        **os.environ,
+        "PY": "python",
+        "S3_PREFIX": "none",
+        "NGPU": "1",
+        "RUN_DIR": str(repo / "run"),
+        **env,
+    }
+    return subprocess.run(
+        ["bash", RUNNER, *stages], cwd=repo, env=e, capture_output=True, text=True
+    )
 
 
 def seed_line(repo):
-    return [ln for ln in (repo / "run" / "configs" / "train.yaml").read_text().splitlines()
-            if ln.startswith("seed:")]
+    return [
+        ln
+        for ln in (repo / "run" / "configs" / "train.yaml").read_text().splitlines()
+        if ln.startswith("seed:")
+    ]
 
 
 def test_plain_run_keeps_unedited_copies_and_records_the_names(repo):
     assert run(repo, "train", "eval").returncode == 0
     for name in ("train.yaml", "train-parent.yaml"):
-        assert (repo / "run" / "configs" / name).read_bytes() == (repo / "configs" / name).read_bytes()
+        assert (repo / "run" / "configs" / name).read_bytes() == (
+            repo / "configs" / name
+        ).read_bytes()
     rows = [json.loads(ln) for ln in (repo / "run" / "stages.jsonl").read_text().splitlines()]
     assert [r["stage"] for r in rows] == ["train", "eval"]
     for r in rows:
         assert (r["parent_config"], r["train_config"], r["ckpt"]) == (
-            "configs/train-parent.yaml", "configs/train.yaml", "checkpoints/hobson-2b-recipe")
+            "configs/train-parent.yaml",
+            "configs/train.yaml",
+            "checkpoints/hobson-2b-recipe",
+        )
 
 
 def test_plain_run_after_seed_run_is_refused(repo):

@@ -6,6 +6,7 @@ Tiny random-weight Qwen3.5 text models: on CUDA when there is one (with
 flash-linear-attention installed that is the production kernel path, and its Triton
 kernels require CUDA tensors), otherwise on CPU with transformers' reference kernels.
 """
+
 from __future__ import annotations
 
 import copy
@@ -27,17 +28,27 @@ DEV = "cuda" if torch.cuda.is_available() else "cpu"
 def _torso(layer_types):
     torch.manual_seed(0)
     cfg = transformers.Qwen3_5TextConfig(
-        vocab_size=128, hidden_size=64, intermediate_size=128, num_hidden_layers=len(layer_types),
-        num_attention_heads=4, num_key_value_heads=2, head_dim=16,
-        linear_num_key_heads=2, linear_num_value_heads=4, linear_key_head_dim=16,
-        linear_value_head_dim=16, layer_types=layer_types)
+        vocab_size=128,
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=len(layer_types),
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=16,
+        linear_num_key_heads=2,
+        linear_num_value_heads=4,
+        linear_key_head_dim=16,
+        linear_value_head_dim=16,
+        layer_types=layer_types,
+    )
     return transformers.Qwen3_5ForCausalLM(cfg).model.eval().to(DEV)
 
 
 def _prefix_cache(torso, prefix):
     ids = torch.tensor([prefix], device=DEV)
-    return torso(input_ids=ids, attention_mask=torch.ones_like(ids), use_cache=True,
-                 return_dict=True).past_key_values
+    return torso(
+        input_ids=ids, attention_mask=torch.ones_like(ids), use_cache=True, return_dict=True
+    ).past_key_values
 
 
 @pytest.mark.parametrize("layer_types", [HYBRID, PLAIN], ids=["hybrid", "plain"])
@@ -52,14 +63,18 @@ def test_shared_prefix_matches_full_prompts(layer_types):
     width = max(map(len, suffixes))
     ids = torch.tensor([s + [0] * (width - len(s)) for s in suffixes], device=DEV)  # right-padded
     mask = torch.tensor([[1] * len(s) + [0] * (width - len(s)) for s in suffixes], device=DEV)
-    full_mask = torch.cat([torch.ones(len(suffixes), len(prefix), dtype=mask.dtype, device=DEV), mask], 1)
-    shared = torso(input_ids=ids, attention_mask=full_mask, past_key_values=cache,
-                   return_dict=True).last_hidden_state
+    full_mask = torch.cat(
+        [torch.ones(len(suffixes), len(prefix), dtype=mask.dtype, device=DEV), mask], 1
+    )
+    shared = torso(
+        input_ids=ids, attention_mask=full_mask, past_key_values=cache, return_dict=True
+    ).last_hidden_state
 
     for i, s in enumerate(suffixes):
         whole = torch.tensor([prefix + s], device=DEV)
-        ref = torso(input_ids=whole, attention_mask=torch.ones_like(whole),
-                    return_dict=True).last_hidden_state[0, len(prefix):]
+        ref = torso(
+            input_ids=whole, attention_mask=torch.ones_like(whole), return_dict=True
+        ).last_hidden_state[0, len(prefix) :]
         # every real suffix position, including the last one (the pooling position)
         torch.testing.assert_close(shared[i, : len(s)], ref, atol=1e-4, rtol=1e-4)
 
@@ -72,8 +87,12 @@ def test_fork_leaves_the_prefix_cache_untouched():
     before = copy.deepcopy([vars(layer) for layer in cache.layers])
     fork = _expand_cache(cache, 3)
     ids = torch.tensor([[5, 6, 7]] * 3, device=DEV)
-    torso(input_ids=ids, attention_mask=torch.ones(3, len(prefix) + 3, dtype=torch.long, device=DEV),
-          past_key_values=fork, return_dict=True)
+    torso(
+        input_ids=ids,
+        attention_mask=torch.ones(3, len(prefix) + 3, dtype=torch.long, device=DEV),
+        past_key_values=fork,
+        return_dict=True,
+    )
     for old, layer in zip(before, cache.layers, strict=True):
         for name, v in old.items():
             now = vars(layer)[name]
@@ -82,8 +101,11 @@ def test_fork_leaves_the_prefix_cache_untouched():
             elif isinstance(v, dict):
                 assert v.keys() == now.keys(), name
                 for k in v:
-                    assert (torch.equal(v[k], now[k]) if isinstance(v[k], torch.Tensor)
-                            else v[k] == now[k]), (name, k)
+                    assert (
+                        torch.equal(v[k], now[k])
+                        if isinstance(v[k], torch.Tensor)
+                        else v[k] == now[k]
+                    ), (name, k)
 
 
 def test_unknown_cache_state_is_refused():

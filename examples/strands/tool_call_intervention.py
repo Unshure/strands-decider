@@ -127,25 +127,35 @@ class ToolCallReviewer(InterventionHandler):
         # Ordinary control flow over typed numbers. Each branch maps one classification
         # pattern to a typed action; the first that fires wins.
         if args_grounded < YES:
-            verdict, action = "guided", Guide(
-                feedback=(
-                    "The arguments are not grounded in anything the user said -- they look "
-                    "guessed. Ask the user to confirm the values instead of inventing them."
-                )
+            verdict, action = (
+                "guided",
+                Guide(
+                    feedback=(
+                        "The arguments are not grounded in anything the user said -- they look "
+                        "guessed. Ask the user to confirm the values instead of inventing them."
+                    )
+                ),
             )
         elif premature >= YES:
-            verdict, action = "guided", Guide(
-                feedback=(
-                    "It is too early to call this tool. Clarify with the user first, then "
-                    "try again."
-                )
+            verdict, action = (
+                "guided",
+                Guide(
+                    feedback=(
+                        "It is too early to call this tool. Clarify with the user first, then "
+                        "try again."
+                    )
+                ),
             )
         else:
             verdict, action = "proceeded", Proceed()
 
         self.log.append(
-            {"tool": name, "args_grounded": round(args_grounded, 2),
-             "premature": round(premature, 2), "verdict": verdict}
+            {
+                "tool": name,
+                "args_grounded": round(args_grounded, 2),
+                "premature": round(premature, 2),
+                "verdict": verdict,
+            }
         )
         arrow = {"proceeded": "->", "guided": "~>"}[verdict]
         print(f"    {arrow} {verdict}\n")

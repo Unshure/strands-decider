@@ -34,7 +34,6 @@ class _StubCfg:
 
 class _StubModelCfg:
     base_model = "stub"
-    num_slots = 24
     temperature = 1.0
     max_length = 512
 
@@ -102,10 +101,28 @@ def test_health_identifies_checkpoint(monkeypatch):
     monkeypatch.setattr(server, "_engine", None)
     monkeypatch.setattr(server.StrandsDeciderModel, "load", lambda *a, **k: _StubModel())
     monkeypatch.setattr(server, "SystemOneEngine", lambda model, cfg: _StubEngine())
-    r = TestClient(server.create_app("checkpoints/strands-decider-test", device="cpu")).get("/health")
+    r = TestClient(server.create_app("checkpoints/strands-decider-test", device="cpu")).get(
+        "/health"
+    )
     assert r.status_code == 200
     assert r.json()["checkpoint"] == "checkpoints/strands-decider-test"
     assert r.json()["max_length"] == 512
+
+
+def test_sagemaker_paths_alias_the_api(monkeypatch):
+    """SageMaker and AgentCore Runtime call GET /ping and POST /invocations; the real app
+    answers them as /health and /v1/systemone."""
+    monkeypatch.setattr(server, "_engine", None)
+    monkeypatch.setattr(server.StrandsDeciderModel, "load", lambda *a, **k: _StubModel())
+    monkeypatch.setattr(server, "SystemOneEngine", lambda model, cfg: _StubEngine())
+    client = TestClient(server.create_app("checkpoints/strands-decider-test", device="cpu"))
+    assert client.get("/ping").json() == client.get("/health").json()
+    body = {"state": "x", "questions": {"q": {"type": "noul", "instructions": "Yes?"}}}
+    r = client.post("/invocations", json=body)
+    assert r.status_code == 200
+    assert r.json()["answers"] == client.post("/v1/systemone", json=body).json()["answers"]
+    bad = {"state": "x", "questions": {"q": {"type": "nope"}}}
+    assert client.post("/invocations", json=bad).status_code == 422
 
 
 def test_documented_payload_round_trips(client):
@@ -206,7 +223,9 @@ def test_real_create_app_routes_work(monkeypatch):
     """
     from strands_decider import infer
 
-    monkeypatch.setattr(server.StrandsDeciderModel, "load", classmethod(lambda cls, *a, **k: _StubModel()))
+    monkeypatch.setattr(
+        server.StrandsDeciderModel, "load", classmethod(lambda cls, *a, **k: _StubModel())
+    )
     monkeypatch.setattr(server, "SystemOneEngine", lambda model, cfg: _StubEngine())
     monkeypatch.setattr(infer, "SystemOneEngine", lambda model, cfg=None: _StubEngine())
 
@@ -233,8 +252,13 @@ def test_real_create_app_routes_work(monkeypatch):
 
 def _racing_engine_cls():
     """Engine stub that records peak concurrent entries into evaluate()."""
-    state = {"enter": threading.Event(), "release": threading.Event(),
-             "inside": 0, "peak": 0, "lock": threading.Lock()}
+    state = {
+        "enter": threading.Event(),
+        "release": threading.Event(),
+        "inside": 0,
+        "peak": 0,
+        "lock": threading.Lock(),
+    }
 
     class _RacingEngine(_StubEngine):
         def evaluate(self, request):
@@ -255,8 +279,9 @@ def _racing_engine_cls():
 
 def _run_racing(monkeypatch, device):
     EngineCls, state = _racing_engine_cls()
-    monkeypatch.setattr(server.StrandsDeciderModel, "load",
-                        classmethod(lambda cls, *a, **k: _StubModel()))
+    monkeypatch.setattr(
+        server.StrandsDeciderModel, "load", classmethod(lambda cls, *a, **k: _StubModel())
+    )
     monkeypatch.setattr(server, "SystemOneEngine", lambda model, cfg: EngineCls())
 
     app = server.create_app("checkpoints/does-not-exist", device=device)
@@ -306,7 +331,9 @@ def test_too_many_options_returns_422(monkeypatch):
         def evaluate(self, request):
             raise ValueError("question has 30 options but this model has 24 slots")
 
-    monkeypatch.setattr(server.StrandsDeciderModel, "load", classmethod(lambda cls, *a, **k: _StubModel()))
+    monkeypatch.setattr(
+        server.StrandsDeciderModel, "load", classmethod(lambda cls, *a, **k: _StubModel())
+    )
     monkeypatch.setattr(server, "SystemOneEngine", lambda model, cfg: _NarrowEngine())
 
     app = server.create_app("checkpoints/does-not-exist", device="cpu")

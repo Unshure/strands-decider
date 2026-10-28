@@ -29,6 +29,7 @@ a plausible wrong answer.
 Held out of training entirely, for the transfer eval: one whole domain skin (`claim`)
 for cross-reference, and one requirement type (`date`) for requirement checking.
 """
+
 from __future__ import annotations
 
 import copy
@@ -54,15 +55,56 @@ class Item:
         return d
 
 
-ORGS = ["Harrowgate Mutual", "Kestrel Freight", "Oduya Health Network", "Linfield Utilities",
-        "Marchetti Group", "Vantadour Systems", "Sørhaug Energi", "Pemberton & Achebe",
-        "Tidewell Retail", "Castellan Insurance", "Ilori Logistics", "Brightmoor Estates",
-        "Ngata Water", "Faulkes Engineering", "Yarrow Public Library", "Delphine Air"]
-PEOPLE = ["A. Okafor", "B. Lindqvist", "C. Ramírez", "D. Haddad", "E. Novak", "F. Mensah",
-          "G. Tanaka", "H. Oyelaran", "I. Petrov", "J. Castillo", "K. Brennan", "L. Achterberg",
-          "M. Sato", "N. Delacroix", "O. Mwangi", "P. Varga", "Q. Holloway", "R. Iyer",
-          "S. Kowalczyk", "T. Adeyemi", "U. Bergström", "V. Moreau", "W. Chukwu", "X. Laine",
-          "Y. Fontaine", "Z. Obi", "Ab. Rossi", "Ba. Nakamura", "Ca. Dubois", "Da. Eriksen"]
+ORGS = [
+    "Harrowgate Mutual",
+    "Kestrel Freight",
+    "Oduya Health Network",
+    "Linfield Utilities",
+    "Marchetti Group",
+    "Vantadour Systems",
+    "Sørhaug Energi",
+    "Pemberton & Achebe",
+    "Tidewell Retail",
+    "Castellan Insurance",
+    "Ilori Logistics",
+    "Brightmoor Estates",
+    "Ngata Water",
+    "Faulkes Engineering",
+    "Yarrow Public Library",
+    "Delphine Air",
+]
+PEOPLE = [
+    "A. Okafor",
+    "B. Lindqvist",
+    "C. Ramírez",
+    "D. Haddad",
+    "E. Novak",
+    "F. Mensah",
+    "G. Tanaka",
+    "H. Oyelaran",
+    "I. Petrov",
+    "J. Castillo",
+    "K. Brennan",
+    "L. Achterberg",
+    "M. Sato",
+    "N. Delacroix",
+    "O. Mwangi",
+    "P. Varga",
+    "Q. Holloway",
+    "R. Iyer",
+    "S. Kowalczyk",
+    "T. Adeyemi",
+    "U. Bergström",
+    "V. Moreau",
+    "W. Chukwu",
+    "X. Laine",
+    "Y. Fontaine",
+    "Z. Obi",
+    "Ab. Rossi",
+    "Ba. Nakamura",
+    "Ca. Dubois",
+    "Da. Eriksen",
+]
 
 
 def _ref(rng: random.Random, p: str) -> str:
@@ -75,50 +117,106 @@ def _ref(rng: random.Random, p: str) -> str:
 SKINS: dict[str, dict[str, Any]] = {
     "incident": dict(
         title="ALERT ROUTING HANDBOOK",
-        entity="component", entity_pl="components",
-        entities=["ledger-sync", "auth-gateway", "search-indexer", "billing-export",
-                  "media-transcoder", "report-builder", "cache-warmer", "webhook-relay",
-                  "geo-resolver", "queue-drainer", "token-minter", "audit-shipper"],
+        entity="component",
+        entity_pl="components",
+        entities=[
+            "ledger-sync",
+            "auth-gateway",
+            "search-indexer",
+            "billing-export",
+            "media-transcoder",
+            "report-builder",
+            "cache-warmer",
+            "webhook-relay",
+            "geo-resolver",
+            "queue-drainer",
+            "token-minter",
+            "audit-shipper",
+        ],
         category="owning team",
         cats=["Payments", "Identity", "Discovery", "Data", "Media", "Reliability"],
         override_cats=["Platform", "Core Operations"],
         override_rule="Components on the legacy list are routed to the {oc} team, "
-                      "whatever the ownership map says.",
+        "whatever the ownership map says.",
         override_head="Legacy list",
         condition="day of the incident",
-        values={"Monday": 0, "Tuesday": 0, "Wednesday": 0, "Thursday": 0,
-                "Friday": 1, "Saturday": 2, "Sunday": 2},
+        values={
+            "Monday": 0,
+            "Tuesday": 0,
+            "Wednesday": 0,
+            "Thursday": 0,
+            "Friday": 1,
+            "Saturday": 2,
+            "Sunday": 2,
+        },
         groups=["Mon-Thu", "Fri", "Sat-Sun"],
-        assignee="on-call engineer", pool="people",
-        record="INCIDENT", ask="Who must be paged for this incident?",
+        assignee="on-call engineer",
+        pool="people",
+        record="INCIDENT",
+        ask="Who must be paged for this incident?",
         verb="is paged",
     ),
     "shipment": dict(
         title="INBOUND HANDLING STANDARD",
-        entity="product line", entity_pl="product lines",
-        entities=["solvent drums", "lithium packs", "bulk flour", "glass panels",
-                  "aerosol cartons", "seed stock", "paint tins", "fertiliser sacks",
-                  "cold vaccines", "steel coil", "resin pellets", "cotton bales"],
+        entity="product line",
+        entity_pl="product lines",
+        entities=[
+            "solvent drums",
+            "lithium packs",
+            "bulk flour",
+            "glass panels",
+            "aerosol cartons",
+            "seed stock",
+            "paint tins",
+            "fertiliser sacks",
+            "cold vaccines",
+            "steel coil",
+            "resin pellets",
+            "cotton bales",
+        ],
         category="handling class",
         cats=["Class A", "Class B", "Class C", "Class D", "Class E"],
         override_cats=["Class R", "Class Q"],
         override_rule="Product lines under an active recall are handled as {oc}, "
-                      "whatever the class table says.",
+        "whatever the class table says.",
         override_head="Active recalls",
         condition="receiving site",
-        values={"Leeds": 0, "York": 0, "Hull": 0, "Derby": 1, "Leicester": 1,
-                "Coventry": 1, "Bristol": 2, "Exeter": 2, "Plymouth": 2},
+        values={
+            "Leeds": 0,
+            "York": 0,
+            "Hull": 0,
+            "Derby": 1,
+            "Leicester": 1,
+            "Coventry": 1,
+            "Bristol": 2,
+            "Exeter": 2,
+            "Plymouth": 2,
+        },
         groups=["North", "Midlands", "South-West"],
-        assignee="receiving bay", pool="bays",
-        record="INBOUND CONSIGNMENT", ask="Which bay must receive this consignment?",
+        assignee="receiving bay",
+        pool="bays",
+        record="INBOUND CONSIGNMENT",
+        ask="Which bay must receive this consignment?",
         verb="receives it",
     ),
     "facility": dict(
         title="CLEANING SCHEDULE RULES",
-        entity="room type", entity_pl="room types",
-        entities=["operating suite", "consulting room", "staff kitchen", "server hall",
-                  "archive store", "lecture theatre", "changing room", "loading dock",
-                  "prayer room", "plant room", "laboratory", "atrium"],
+        entity="room type",
+        entity_pl="room types",
+        entities=[
+            "operating suite",
+            "consulting room",
+            "staff kitchen",
+            "server hall",
+            "archive store",
+            "lecture theatre",
+            "changing room",
+            "loading dock",
+            "prayer room",
+            "plant room",
+            "laboratory",
+            "atrium",
+        ],
         category="cleaning regime",
         cats=["Regime 1", "Regime 2", "Regime 3", "Regime 4"],
         override_cats=["Regime Z", "Regime X"],
@@ -127,29 +225,45 @@ SKINS: dict[str, dict[str, Any]] = {
         condition="shift",
         values={"Early": 0, "Day": 0, "Late": 1, "Evening": 1, "Night": 2, "Overnight": 2},
         groups=["Morning", "Afternoon", "Night"],
-        assignee="crew", pool="crews",
-        record="WORK ORDER", ask="Which crew is assigned to this work order?",
+        assignee="crew",
+        pool="crews",
+        record="WORK ORDER",
+        ask="Which crew is assigned to this work order?",
         verb="is assigned",
     ),
     # Held out of training: the transfer eval asks whether the lookup skill survives an
     # entirely unseen vocabulary.
     "claim": dict(
         title="CLAIMS ALLOCATION PROCEDURE",
-        entity="claim type", entity_pl="claim types",
-        entities=["water ingress", "theft from vehicle", "storm roof", "subsidence",
-                  "accidental glass", "fire in kitchen", "pet injury", "travel delay",
-                  "lost baggage", "frozen food loss", "garden structure", "tenant damage"],
+        entity="claim type",
+        entity_pl="claim types",
+        entities=[
+            "water ingress",
+            "theft from vehicle",
+            "storm roof",
+            "subsidence",
+            "accidental glass",
+            "fire in kitchen",
+            "pet injury",
+            "travel delay",
+            "lost baggage",
+            "frozen food loss",
+            "garden structure",
+            "tenant damage",
+        ],
         category="handling unit",
         cats=["Unit North", "Unit South", "Unit Motor", "Unit Travel", "Unit Home"],
         override_cats=["Specialist Unit", "Review Unit"],
         override_rule="Claim types on the watch list are allocated to the {oc}, "
-                      "whatever the unit table says.",
+        "whatever the unit table says.",
         override_head="Watch list",
         condition="policy tier",
         values={"Basic": 0, "Standard": 0, "Plus": 1, "Extra": 1, "Premier": 2, "Elite": 2},
         groups=["Core", "Enhanced", "Premium"],
-        assignee="adjuster", pool="people",
-        record="CLAIM", ask="Which adjuster is allocated this claim?",
+        assignee="adjuster",
+        pool="people",
+        record="CLAIM",
+        ask="Which adjuster is allocated this claim?",
         verb="is allocated",
     ),
 }
@@ -161,10 +275,12 @@ def _pool(rng: random.Random, kind: str, n: int) -> list[str]:
     if kind == "people":
         return rng.sample(PEOPLE, n)
     if kind == "bays":
-        return [f"Bay {c}" for c in rng.sample(
-            [f"{i}{L}" for i in range(1, 10) for L in "ABCD"], n)]
-    return [f"Crew {c}" for c in rng.sample(
-        [f"{L}{i}" for L in "KLMNPRST" for i in range(1, 9)], n)]
+        return [
+            f"Bay {c}" for c in rng.sample([f"{i}{L}" for i in range(1, 10) for L in "ABCD"], n)
+        ]
+    return [
+        f"Crew {c}" for c in rng.sample([f"{L}{i}" for L in "KLMNPRST" for i in range(1, 9)], n)
+    ]
 
 
 def xref_world(rng: random.Random, skin: str) -> dict[str, Any]:
@@ -189,9 +305,18 @@ def xref_world(rng: random.Random, skin: str) -> dict[str, Any]:
     old_cat = {e: (rng.choice(cats) if rng.random() < 0.6 else ent_cat[e]) for e in ents}
 
     return dict(
-        skin=skin, org=rng.choice(ORGS), ref=_ref(rng, "DOC"), rev=rng.randint(3, 19),
-        entities=ents, cats=cats, ocat=ocat, ent_cat=ent_cat, override=override,
-        groups=groups, assign=assign, old_cat=old_cat,
+        skin=skin,
+        org=rng.choice(ORGS),
+        ref=_ref(rng, "DOC"),
+        rev=rng.randint(3, 19),
+        entities=ents,
+        cats=cats,
+        ocat=ocat,
+        ent_cat=ent_cat,
+        override=override,
+        groups=groups,
+        assign=assign,
+        old_cat=old_cat,
         record_entity=rng.choice(ents),
         record_value=rng.choice(list(s["values"])),
         record_id=_ref(rng, "REC"),
@@ -240,46 +365,59 @@ def render_xref(w: dict[str, Any]) -> tuple[str, str]:
     grid_head = f"  {C:<22}" + "".join(f"{g:<18}" for g in w["groups"])
     grid = "\n".join(
         f"  {c:<22}" + "".join(f"{w['assign'][f'{c}|{g}']:<18}" for g in w["groups"])
-        for c in [*w["cats"], w["ocat"]])
-    groups_tbl = _table(st, (G, "group"),
-                        [(v, w["groups"][gi]) for v, gi in s["values"].items()])
+        for c in [*w["cats"], w["ocat"]]
+    )
+    groups_tbl = _table(st, (G, "group"), [(v, w["groups"][gi]) for v, gi in s["values"].items()])
     over = "\n".join(f"  - {e}" for e in w["override"])
 
     extras = {
-        "purpose": (f"PURPOSE\nThis document fixes how each {s['record'].lower()} is "
-                    f"assigned. Where a line of this document conflicts with an older "
-                    f"instruction, this document prevails. Figures in the revision "
-                    f"history are informational."),
-        "glossary": (f"GLOSSARY\n  {C.capitalize()}: the grouping that decides the "
-                     f"{A}.\n  Group: the band a {G} falls into, set in the group table.\n"
-                     f"  Requester note: free text from whoever raised the record; it is "
-                     f"not an input to assignment."),
-        "superseded": (f"SUPERSEDED {C.upper()} TABLE (withdrawn {w['superseded_date']}; "
-                       f"retained for audit only, do not use)\n" +
-                       _table(st, (E, C), [(e, w["old_cat"][e]) for e in w["entities"]])),
-        "history": (f"REVISION HISTORY\n  r{w['rev']}: current tables issued.\n"
-                    f"  r{w['rev'] - 1}: {C} table revised; previous table withdrawn.\n"
-                    f"  r{w['rev'] - 2}: {A} rota reorganised by {G} group."),
+        "purpose": (
+            f"PURPOSE\nThis document fixes how each {s['record'].lower()} is "
+            f"assigned. Where a line of this document conflicts with an older "
+            f"instruction, this document prevails. Figures in the revision "
+            f"history are informational."
+        ),
+        "glossary": (
+            f"GLOSSARY\n  {C.capitalize()}: the grouping that decides the "
+            f"{A}.\n  Group: the band a {G} falls into, set in the group table.\n"
+            f"  Requester note: free text from whoever raised the record; it is "
+            f"not an input to assignment."
+        ),
+        "superseded": (
+            f"SUPERSEDED {C.upper()} TABLE (withdrawn {w['superseded_date']}; "
+            f"retained for audit only, do not use)\n"
+            + _table(st, (E, C), [(e, w["old_cat"][e]) for e in w["entities"]])
+        ),
+        "history": (
+            f"REVISION HISTORY\n  r{w['rev']}: current tables issued.\n"
+            f"  r{w['rev'] - 1}: {C} table revised; previous table withdrawn.\n"
+            f"  r{w['rev'] - 2}: {A} rota reorganised by {G} group."
+        ),
     }
     core = [
         f"{C.upper()} TABLE\nEach {E} belongs to exactly one {C}.\n{own}",
-        f"OVERRIDE\n{s['override_rule'].format(oc=w['ocat'])}\n"
-        f"{s['override_head']}:\n{over}",
+        f"OVERRIDE\n{s['override_rule'].format(oc=w['ocat'])}\n{s['override_head']}:\n{over}",
         f"{G.upper()} GROUPS\n{groups_tbl}",
         f"{A.upper()} BY {C.upper()} AND GROUP\n{grid_head}\n{grid}",
     ]
     # Distractor sections are interleaved with the rules, in an order fixed per world.
     blocks = core[:2] + [extras[w["order"][0]]] + core[2:] + [extras[k] for k in w["order"][1:]]
 
-    rec = [f"  Reference : {w['record_id']}",
-           f"  {E.capitalize():<10}: {w['record_entity']}",
-           f"  {G.capitalize()} : {w['record_value']}"]
+    rec = [
+        f"  Reference : {w['record_id']}",
+        f"  {E.capitalize():<10}: {w['record_entity']}",
+        f"  {G.capitalize()} : {w['record_value']}",
+    ]
     if w["note"]:
-        rec.append(f"  Requester note: \"I believe {w['note']} should take this.\"")
+        rec.append(f'  Requester note: "I believe {w["note"]} should take this."')
 
-    doc = (f"{w['org'].upper()} - {s['title']} ({w['ref']}, revision {w['rev']})\n\n"
-           + "\n\n".join(blocks)
-           + f"\n\n{s['record']}\n" + "\n".join(rec) + "\n")
+    doc = (
+        f"{w['org'].upper()} - {s['title']} ({w['ref']}, revision {w['rev']})\n\n"
+        + "\n\n".join(blocks)
+        + f"\n\n{s['record']}\n"
+        + "\n".join(rec)
+        + "\n"
+    )
     return doc, s["ask"]
 
 
@@ -330,12 +468,23 @@ def xref_pair(rng: random.Random, skin: str) -> list[Item]:
                 break
             rng.shuffle(opts)
             verb = SKINS[skin]["verb"]
-            out.append(Item(
-                "choice", doc, ask, [[v, f"{v} {verb}"] for v, _ in opts],
-                next(i for i, (_, e) in enumerate(opts) if e == "correct"),
-                "syn_xref",
-                {"skin": skin, "pair": pair_id, "half": half, "flip": move,
-                 "errors": [e for _, e in opts]}))
+            out.append(
+                Item(
+                    "choice",
+                    doc,
+                    ask,
+                    [[v, f"{v} {verb}"] for v, _ in opts],
+                    next(i for i, (_, e) in enumerate(opts) if e == "correct"),
+                    "syn_xref",
+                    {
+                        "skin": skin,
+                        "pair": pair_id,
+                        "half": half,
+                        "flip": move,
+                        "errors": [e for _, e in opts],
+                    },
+                )
+            )
         if len(out) == 2:
             return out
     raise RuntimeError("could not build a flipping cross-reference pair")
@@ -384,25 +533,35 @@ def req_world(rng: random.Random, allowed: list[str], must: str | None = None) -
     order = rng.choice(["ascending", "descending"])
     entries = []
     for _ in range(n):
-        entries.append(dict(
-            code=f"{rng.choice('ABCDEFGHJKMNPR')}{rng.choice('ABCDEFGHJKMNPR')}-{rng.randint(100, 999)}",
-            name=f"{sk['noun']} {rng.randint(1, 60)}",
-            day=(rng.randint(1, 28), rng.randint(1, 12), 2026),
-            qty=round(rng.uniform(1, 90), 4),
-        ))
+        entries.append(
+            dict(
+                code=f"{rng.choice('ABCDEFGHJKMNPR')}{rng.choice('ABCDEFGHJKMNPR')}-{rng.randint(100, 999)}",
+                name=f"{sk['noun']} {rng.randint(1, 60)}",
+                day=(rng.randint(1, 28), rng.randint(1, 12), 2026),
+                qty=round(rng.uniform(1, 90), 4),
+            )
+        )
     return dict(
-        skin=sk, reqs=reqs, n=n, dp=dp, order=order, entries=entries,
-        org=rng.choice(ORGS), ref=_ref(rng, "REQ"),
-        context=rng.choice([
-            f"We are consolidating the {sk['what']} for the quarterly return. The "
-            f"figures come from three sites and have already been reconciled, so do not "
-            f"recompute anything; just present them as asked.",
-            f"Please prepare the {sk['what']} for the auditor. Accuracy of the underlying "
-            f"figures is not in question here -- the auditor checks the presentation "
-            f"against the list below and nothing else.",
-            f"The {sk['what']} below go into an automated import, which rejects any file "
-            f"that departs from the format. Content was checked upstream.",
-        ]),
+        skin=sk,
+        reqs=reqs,
+        n=n,
+        dp=dp,
+        order=order,
+        entries=entries,
+        org=rng.choice(ORGS),
+        ref=_ref(rng, "REQ"),
+        context=rng.choice(
+            [
+                f"We are consolidating the {sk['what']} for the quarterly return. The "
+                f"figures come from three sites and have already been reconciled, so do not "
+                f"recompute anything; just present them as asked.",
+                f"Please prepare the {sk['what']} for the auditor. Accuracy of the underlying "
+                f"figures is not in question here -- the auditor checks the presentation "
+                f"against the list below and nothing else.",
+                f"The {sk['what']} below go into an automated import, which rejects any file "
+                f"that departs from the format. Content was checked upstream.",
+            ]
+        ),
         violation=None,
         # properties NOT required are allowed to vary; the pair shares these so they
         # cannot be what separates a satisfying response from a failing one.
@@ -428,8 +587,7 @@ def render_req(w: dict[str, Any]) -> tuple[str, str]:
     sk, reqs, v = w["skin"], w["reqs"], w["violation"]
     ents = list(w["entries"])
     if "count" in reqs and v == "count":
-        ents = [*ents, dict(ents[0], code=ents[0]["code"][:-1] + "0",
-                            name=ents[0]["name"] + "b")]
+        ents = [*ents, dict(ents[0], code=ents[0]["code"][:-1] + "0", name=ents[0]["name"] + "b")]
 
     if "sort" in reqs:
         ents = sorted(ents, key=lambda e: e["qty"], reverse=(w["order"] == "descending"))
@@ -453,11 +611,11 @@ def render_req(w: dict[str, Any]) -> tuple[str, str]:
         ds = date_style
         if v == "date" and j == 1:
             ds = "dmy"
-        prefix = ("prefix" in reqs and not (v == "prefix" and j == 1)) or \
-                 ("prefix" not in reqs and w["free_prefix"])
+        prefix = ("prefix" in reqs and not (v == "prefix" and j == 1)) or (
+            "prefix" not in reqs and w["free_prefix"]
+        )
         head = f"{e['code']}  " if prefix else ""
-        lines.append(f"{head}{e['name']:<12} {_fmt_date(e['day'], ds):<12} "
-                     f"{q:.{this_dp}f} {unit}")
+        lines.append(f"{head}{e['name']:<12} {_fmt_date(e['day'], ds):<12} {q:.{this_dp}f} {unit}")
     shown_n = len(ents)
     if "countline" in reqs:
         lines.append(f"Entries: {shown_n + (1 if v == 'countline' else 0)}")
@@ -466,18 +624,35 @@ def render_req(w: dict[str, Any]) -> tuple[str, str]:
 
     req_lines = []
     for r in reqs:
-        req_lines.append("  - " + REQ_TEXT[r].format(
-            n=w["n"], unit=sk["unit"], dp=w["dp"], dps="s" if w["dp"] > 1 else "",
-            order=w["order"]))
-    doc = (f"{w['org'].upper()} - PRESENTATION REQUEST {w['ref']}\n\n"
-           f"REQUEST\n{w['context']}\nRequirements:\n" + "\n".join(req_lines) +
-           "\n\nRESPONSE\n" + "\n".join(lines) + "\n")
+        req_lines.append(
+            "  - "
+            + REQ_TEXT[r].format(
+                n=w["n"],
+                unit=sk["unit"],
+                dp=w["dp"],
+                dps="s" if w["dp"] > 1 else "",
+                order=w["order"],
+            )
+        )
+    doc = (
+        f"{w['org'].upper()} - PRESENTATION REQUEST {w['ref']}\n\n"
+        f"REQUEST\n{w['context']}\nRequirements:\n"
+        + "\n".join(req_lines)
+        + "\n\nRESPONSE\n"
+        + "\n".join(lines)
+        + "\n"
+    )
     return doc, ""
 
 
 def req_sentence(w: dict[str, Any], r: str) -> str:
-    return REQ_TEXT[r].format(n=w["n"], unit=w["skin"]["unit"], dp=w["dp"],
-                              dps="s" if w["dp"] > 1 else "", order=w["order"])
+    return REQ_TEXT[r].format(
+        n=w["n"],
+        unit=w["skin"]["unit"],
+        dp=w["dp"],
+        dps="s" if w["dp"] > 1 else "",
+        order=w["order"],
+    )
 
 
 def _displayed_qty(w: dict[str, Any], e: dict[str, Any]) -> str:
@@ -518,22 +693,41 @@ def req_pair(rng: random.Random, allowed: list[str], must: str | None = None) ->
         if as_choice:
             # Which requirement fails? Options are the listed requirements plus "none".
             names = list(world["reqs"])
-            opts = [[r, "fails: " + req_sentence(world, r)] for r in names] + \
-                   [["none", "the response meets every requirement"]]
+            opts = [[r, "fails: " + req_sentence(world, r)] for r in names] + [
+                ["none", "the response meets every requirement"]
+            ]
             label = [o[0] for o in opts].index(v if v else "none")
-            out.append(Item("choice", doc,
-                            "Which listed requirement, if any, does the response fail?",
-                            opts, label, "syn_reqcheck",
-                            {"pair": pair_id, "half": half, "violation": v or "none",
-                             "reqs": names}))
+            out.append(
+                Item(
+                    "choice",
+                    doc,
+                    "Which listed requirement, if any, does the response fail?",
+                    opts,
+                    label,
+                    "syn_reqcheck",
+                    {"pair": pair_id, "half": half, "violation": v or "none", "reqs": names},
+                )
+            )
         else:
-            out.append(Item("noul", doc,
-                            "Does the response meet every requirement in the request?",
-                            [["false", "at least one requirement is not met"],
-                             ["true", "every requirement is met"]],
-                            0 if v else 1, "syn_reqcheck",
-                            {"pair": pair_id, "half": half, "violation": v or "none",
-                             "reqs": list(world["reqs"])}))
+            out.append(
+                Item(
+                    "noul",
+                    doc,
+                    "Does the response meet every requirement in the request?",
+                    [
+                        ["false", "at least one requirement is not met"],
+                        ["true", "every requirement is met"],
+                    ],
+                    0 if v else 1,
+                    "syn_reqcheck",
+                    {
+                        "pair": pair_id,
+                        "half": half,
+                        "violation": v or "none",
+                        "reqs": list(world["reqs"]),
+                    },
+                )
+            )
     return out
 
 
@@ -562,10 +756,15 @@ def generate_pairs(n_pairs: int, seed: int, split: str) -> list[Item]:
 if __name__ == "__main__":
     import sys
 
-    for it in generate_pairs(int(sys.argv[1]) if len(sys.argv) > 1 else 2, seed=5,
-                             split=sys.argv[2] if len(sys.argv) > 2 else "train"):
+    for it in generate_pairs(
+        int(sys.argv[1]) if len(sys.argv) > 1 else 2,
+        seed=5,
+        split=sys.argv[2] if len(sys.argv) > 2 else "train",
+    ):
         print("=" * 80)
-        print(f"[{it.task}] {it.kind}  meta={ {k: v for k, v in it.meta.items() if k != 'errors'} }")
+        print(
+            f"[{it.task}] {it.kind}  meta={ {k: v for k, v in it.meta.items() if k != 'errors'} }"
+        )
         print(it.state)
         print("ASK:", it.instructions)
         for k, (v, d) in enumerate(it.options):

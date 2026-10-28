@@ -44,17 +44,27 @@ TICKETS = [
 QUESTIONS = {
     "team": ChoiceQuestion(
         instructions="Which team should handle this ticket?",
-        criteria={"billing": "charges, refunds, payouts", "technical": "bugs and outages",
-                  "account": "identity and settings", "sales": "new purchases"},
+        criteria={
+            "billing": "charges, refunds, payouts",
+            "technical": "bugs and outages",
+            "account": "identity and settings",
+            "sales": "new purchases",
+        },
     ),
     "urgent": NoulQuestion(instructions="Does the customer convey urgency?"),
-    "mood": ScoreQuestion(instructions="How frustrated is the customer?",
-                          criteria=["calm", "mildly annoyed", "frustrated", "angry"]),
+    "mood": ScoreQuestion(
+        instructions="How frustrated is the customer?",
+        criteria=["calm", "mildly annoyed", "frustrated", "angry"],
+    ),
     "action": ChoiceQuestion(
         instructions="What should the agent do next?",
-        criteria={"answer": "answer from policy", "refund": "issue a refund",
-                  "verify": "confirm the account holder's identity",
-                  "escalate": "escalate to finance", "ask": "ask a clarifying question"},
+        criteria={
+            "answer": "answer from policy",
+            "refund": "issue a refund",
+            "verify": "confirm the account holder's identity",
+            "escalate": "escalate to finance",
+            "ask": "ask a clarifying question",
+        },
     ),
     "allowed": NoulQuestion(instructions="Does the policy allow a refund here?"),
 }
@@ -65,7 +75,9 @@ def requests() -> dict[str, SystemOneRequest]:
     for t, ticket in enumerate(TICKETS):
         for repeats in (0, 4, 30):
             state = POLICY * repeats + ticket
-            out[f"t{t}-p{repeats}-q1"] = SystemOneRequest(state=state, questions={"team": QUESTIONS["team"]})
+            out[f"t{t}-p{repeats}-q1"] = SystemOneRequest(
+                state=state, questions={"team": QUESTIONS["team"]}
+            )
             out[f"t{t}-p{repeats}-q5"] = SystemOneRequest(state=state, questions=QUESTIONS)
     return out
 
@@ -94,7 +106,9 @@ def compare(reference: dict[str, dict], other: dict[str, dict]) -> dict[str, flo
     worst, changed, total = 0.0, 0, 0
     for name, response in reference.items():
         if other[name]["usage"] != response["usage"]:
-            raise SystemExit(f"{name}: token counts differ: {other[name]['usage']} vs {response['usage']}")
+            raise SystemExit(
+                f"{name}: token counts differ: {other[name]['usage']} vs {response['usage']}"
+            )
         for question, ref in response["answers"].items():
             got = other[name]["answers"][question]
             p, r = probabilities(got), probabilities(ref)
@@ -105,11 +119,16 @@ def compare(reference: dict[str, dict], other: dict[str, dict]) -> dict[str, flo
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("checkpoint")
-    ap.add_argument("--device", action="append", required=True,
-                    help="repeatable; the first is the reference")
-    ap.add_argument("--out", default=None, help="write every device's answers and the comparison here")
+    ap.add_argument(
+        "--device", action="append", required=True, help="repeatable; the first is the reference"
+    )
+    ap.add_argument(
+        "--out", default=None, help="write every device's answers and the comparison here"
+    )
     args = ap.parse_args()
     if len(args.device) < 2:
         ap.error("give at least two --device values")
@@ -117,12 +136,22 @@ def main() -> None:
     reference = args.device[0]
     report = {device: compare(results[reference], results[device]) for device in args.device[1:]}
     for device, row in report.items():
-        print(f"{device} vs {reference}: max |dp| {row['max_abs_dp']:.4f}, "
-              f"changed answers {row['changed_answers']}/{row['answers']}")
+        print(
+            f"{device} vs {reference}: max |dp| {row['max_abs_dp']:.4f}, "
+            f"changed answers {row['changed_answers']}/{row['answers']}"
+        )
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:
-            json.dump({"checkpoint": args.checkpoint, "reference": reference, "comparison": report,
-                       "answers": results}, fh, indent=1)
+            json.dump(
+                {
+                    "checkpoint": args.checkpoint,
+                    "reference": reference,
+                    "comparison": report,
+                    "answers": results,
+                },
+                fh,
+                indent=1,
+            )
 
 
 if __name__ == "__main__":

@@ -32,6 +32,7 @@ promotional, scam, or bulk message") would contradict a flipped question.
 Rows keep no instruction variants: the collator samples a phrasing from them, and the
 source row's variants phrase the *original* question, whose answer is different.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -66,19 +67,19 @@ COMPLEMENT = [
 ]
 # Positive: "k or higher"; negative: "lower than k".
 THRESHOLD = [
-    ('{q} Scale: {scale}. Is the rating {k} or higher?', True),
-    ('{q} Using the scale {scale}: does it reach at least {k}?', True),
-    ('{q} Scale: {scale}. Is the rating lower than {k}?', False),
-    ('{q} Using the scale {scale}: does it fall short of {k}?', False),
+    ("{q} Scale: {scale}. Is the rating {k} or higher?", True),
+    ("{q} Using the scale {scale}: does it reach at least {k}?", True),
+    ("{q} Scale: {scale}. Is the rating lower than {k}?", False),
+    ("{q} Using the scale {scale}: does it fall short of {k}?", False),
 ]
 # Positive keeps the row's answer; negative flips it.
 POLARITY = [
     ('True or false: the honest answer to "{q}" is positive.', True),
     ('Confirm or deny: the answer to "{q}" is yes.', True),
-    ('Is it right to answer yes here? {q}', True),
+    ("Is it right to answer yes here? {q}", True),
     ('True or false: the honest answer to "{q}" is negative.', False),
     ('Confirm or deny: the answer to "{q}" is no.', False),
-    ('Is it wrong to answer yes here? {q}', False),
+    ("Is it wrong to answer yes here? {q}", False),
 ]
 
 # The probe's forms (evaluation/question_sensitivity.py); never generated here.
@@ -109,8 +110,15 @@ def is_answer(ex: Example, rng: random.Random) -> tuple[Example, dict]:
     x = ex.options[k][0]
     q = _pick(rng, IS_ANSWER, positive).format(q=_clean(ex.instructions), x=_clean(x))
     label = int(use_gold == positive)
-    out = Example(kind="noul", state=ex.state, instructions=q, options=GENERIC_NOUL,
-                  label=label, task=f"{ex.task}+is_answer", weight=ex.weight)
+    out = Example(
+        kind="noul",
+        state=ex.state,
+        instructions=q,
+        options=GENERIC_NOUL,
+        label=label,
+        task=f"{ex.task}+is_answer",
+        weight=ex.weight,
+    )
     return out, {"transform": "is_answer", "x": x, "positive": positive}
 
 
@@ -122,10 +130,16 @@ def complement(ex: Example, rng: random.Random) -> tuple[Example, dict]:
     positive = rng.random() < 0.5
     q = _pick(rng, COMPLEMENT, positive).format(q=_clean(ex.instructions))
     want = ex.options[gold] if positive else ex.options[other]
-    out = Example(kind="choice", state=ex.state, instructions=q, options=pair,
-                  label=pair.index(want), task=f"{ex.task}+complement", weight=ex.weight)
-    return out, {"transform": "complement", "gold_name": ex.options[gold][0],
-                 "positive": positive}
+    out = Example(
+        kind="choice",
+        state=ex.state,
+        instructions=q,
+        options=pair,
+        label=pair.index(want),
+        task=f"{ex.task}+complement",
+        weight=ex.weight,
+    )
+    return out, {"transform": "complement", "gold_name": ex.options[gold][0], "positive": positive}
 
 
 def threshold(ex: Example, rng: random.Random) -> tuple[Example, dict]:
@@ -134,15 +148,26 @@ def threshold(ex: Example, rng: random.Random) -> tuple[Example, dict]:
     # Choose the label first, then a (polarity, k) that produces it, so labels stay
     # balanced whatever the gold distribution; fall back if none can.
     want = rng.random() < 0.5
-    cands = [(p, k) for p in (True, False) for k in range(1, n)
-             if ((gold >= k) if p else (gold < k)) == want]
+    cands = [
+        (p, k)
+        for p in (True, False)
+        for k in range(1, n)
+        if ((gold >= k) if p else (gold < k)) == want
+    ]
     if not cands:
         cands = [(p, k) for p in (True, False) for k in range(1, n)]
     positive, k = rng.choice(cands)
     label = int((gold >= k) if positive else (gold < k))
     q = _pick(rng, THRESHOLD, positive).format(q=_clean(ex.instructions), scale=scale, k=k)
-    out = Example(kind="noul", state=ex.state, instructions=q, options=GENERIC_NOUL,
-                  label=label, task=f"{ex.task}+threshold", weight=ex.weight)
+    out = Example(
+        kind="noul",
+        state=ex.state,
+        instructions=q,
+        options=GENERIC_NOUL,
+        label=label,
+        task=f"{ex.task}+threshold",
+        weight=ex.weight,
+    )
     return out, {"transform": "threshold", "k": k, "positive": positive}
 
 
@@ -150,8 +175,15 @@ def polarity(ex: Example, rng: random.Random) -> tuple[Example, dict]:
     positive = rng.random() < 0.5
     q = _pick(rng, POLARITY, positive).format(q=_clean(ex.instructions))
     label = ex.label if positive else 1 - ex.label
-    out = Example(kind="noul", state=ex.state, instructions=q, options=GENERIC_NOUL,
-                  label=label, task=f"{ex.task}+polarity", weight=ex.weight)
+    out = Example(
+        kind="noul",
+        state=ex.state,
+        instructions=q,
+        options=GENERIC_NOUL,
+        label=label,
+        task=f"{ex.task}+polarity",
+        weight=ex.weight,
+    )
     return out, {"transform": "polarity", "positive": positive}
 
 
@@ -190,10 +222,16 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--src", default="data/train_v5.jsonl")
     ap.add_argument("--fraction", type=float, default=0.3)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--replace-out", default="data/train_v11a.jsonl",
-                    help="arm A: source rows with the chosen fraction replaced")
-    ap.add_argument("--kl-out", default="data/kl_v11b.jsonl",
-                    help="arm B: the transformed rows alone, for kl_only_files")
+    ap.add_argument(
+        "--replace-out",
+        default="data/train_v11a.jsonl",
+        help="arm A: source rows with the chosen fraction replaced",
+    )
+    ap.add_argument(
+        "--kl-out",
+        default="data/kl_v11b.jsonl",
+        help="arm B: the transformed rows alone, for kl_only_files",
+    )
     args = ap.parse_args(argv)
 
     examples = list(read_jsonl(args.src))

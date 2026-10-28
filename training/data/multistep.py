@@ -23,6 +23,7 @@ Every label comes from the dataset; nothing is estimated. Documents longer than 
 character budget are windowed only where that cannot change the label (ContractNLI:
 the window keeps every evidence span) or trimmed only of distractors (MuSiQue).
 """
+
 from __future__ import annotations
 
 import json
@@ -50,6 +51,7 @@ CANNOT = "cannot be determined from these paragraphs"
 
 
 # ---- ContractNLI ------------------------------------------------------------
+
 
 def _window(text: str, spans: list[list[int]], evidence: list[int], budget: int) -> str | None:
     """A contiguous stretch of at most `budget` characters containing every evidence span.
@@ -96,29 +98,51 @@ def contractnli(path: str, budget: int = CHAR_BUDGET) -> Iterator[Example]:
             state = _window(doc["text"], doc["spans"], ann["spans"], budget)
             if state is None:
                 continue
-            q = ("Does this contract entail, contradict, or not mention the following "
-                 f'statement? "{hyps[key]["hypothesis"]}"')
-            yield Example(kind="choice", state=state, instructions=q, options=NLI_OPTIONS,
-                          label=label, task="contractnli")
+            q = (
+                "Does this contract entail, contradict, or not mention the following "
+                f'statement? "{hyps[key]["hypothesis"]}"'
+            )
+            yield Example(
+                kind="choice",
+                state=state,
+                instructions=q,
+                options=NLI_OPTIONS,
+                label=label,
+                task="contractnli",
+            )
 
 
 # ---- HotpotQA ---------------------------------------------------------------
+
 
 def hotpotqa(rows: Iterable[dict]) -> Iterator[Example]:
     for r in rows:
         if r["type"] != "comparison":
             continue
         ctx = r["context"]
-        state = "\n\n".join(f"{t}: {''.join(s)}" for t, s in zip(ctx["title"], ctx["sentences"], strict=True))
+        state = "\n\n".join(
+            f"{t}: {''.join(s)}" for t, s in zip(ctx["title"], ctx["sentences"], strict=True)
+        )
         ans = r["answer"].strip()
         titles = list(dict.fromkeys(r["supporting_facts"]["title"]))
         if ans.lower() in ("yes", "no"):
-            yield Example(kind="noul", state=state, instructions=r["question"], options=YES_NO,
-                          label=int(ans.lower() == "yes"), task="hotpotqa")
+            yield Example(
+                kind="noul",
+                state=state,
+                instructions=r["question"],
+                options=YES_NO,
+                label=int(ans.lower() == "yes"),
+                task="hotpotqa",
+            )
         elif len(titles) == 2 and ans in titles:
-            yield Example(kind="choice", state=state, instructions=r["question"],
-                          options=[[t, ""] for t in titles], label=titles.index(ans),
-                          task="hotpotqa")
+            yield Example(
+                kind="choice",
+                state=state,
+                instructions=r["question"],
+                options=[[t, ""] for t in titles],
+                label=titles.index(ans),
+                task="hotpotqa",
+            )
 
 
 # ---- BoardgameQA ------------------------------------------------------------
@@ -133,11 +157,18 @@ def boardgame(rows: Iterable[dict]) -> Iterator[Example]:
         if cut < 0:
             continue
         label = {"proved": 0, "disproved": 1, "unknown": 2}[r["label"]]
-        yield Example(kind="choice", state=ex[:cut].strip(), instructions=ex[cut:].strip(),
-                      options=BOARDGAME_OPTIONS, label=label, task="boardgame")
+        yield Example(
+            kind="choice",
+            state=ex[:cut].strip(),
+            instructions=ex[cut:].strip(),
+            options=BOARDGAME_OPTIONS,
+            label=label,
+            task="boardgame",
+        )
 
 
 # ---- MuSiQue ----------------------------------------------------------------
+
 
 def musique(rows: Iterable[dict], budget: int = CHAR_BUDGET, seed: int = 0) -> Iterator[Example]:
     rng = random.Random(seed)
@@ -161,13 +192,22 @@ def musique(rows: Iterable[dict], budget: int = CHAR_BUDGET, seed: int = 0) -> I
         if len(options) < 3:
             continue
         label = options.index(answer) if r["answerable"] else options.index(CANNOT)
-        yield Example(kind="choice", state=state, instructions=r["question"],
-                      options=[[o, ""] for o in options], label=label, task="musique")
+        yield Example(
+            kind="choice",
+            state=state,
+            instructions=r["question"],
+            options=[[o, ""] for o in options],
+            label=label,
+            task="musique",
+        )
 
 
 # ---- corpus assembly --------------------------------------------------------
 
-def balance_by_claim(examples: list[Example], *, min_count: int = 25, seed: int = 0) -> list[Example]:
+
+def balance_by_claim(
+    examples: list[Example], *, min_count: int = 25, seed: int = 0
+) -> list[Example]:
     """Equal counts of each answer per ContractNLI claim, so the claim alone predicts nothing.
 
     Every contract is asked the same 17 claims, and several are nearly constant ("no
@@ -206,8 +246,11 @@ def fits(examples: list[Example], tokenizer: Any, max_tokens: int) -> list[Examp
     """Drop rows whose rendered prompt exceeds the window (truncation would cut options)."""
     from strands_decider.prompting import build_prompt
 
-    return [e for e in examples
-            if len(tokenizer(build_prompt(e.state, e.to_question())[0])["input_ids"]) <= max_tokens]
+    return [
+        e
+        for e in examples
+        if len(tokenizer(build_prompt(e.state, e.to_question())[0])["input_ids"]) <= max_tokens
+    ]
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -241,10 +284,12 @@ def main(argv: list[str] | None = None) -> None:
     bg_valid = load_dataset("tasksource/Boardgame-QA", split="valid")
 
     train = {
-        "contractnli": balance_by_claim(list(contractnli(f"{args.raw}/contract-nli/train.json")),
-                                        seed=args.seed),
-        "musique": list(musique(musique_pairs(mus_train, args.musique_questions, args.seed),
-                                seed=args.seed)),
+        "contractnli": balance_by_claim(
+            list(contractnli(f"{args.raw}/contract-nli/train.json")), seed=args.seed
+        ),
+        "musique": list(
+            musique(musique_pairs(mus_train, args.musique_questions, args.seed), seed=args.seed)
+        ),
         "boardgame": list(boardgame(bg_train)),
     }
     evals = {
@@ -253,9 +298,11 @@ def main(argv: list[str] | None = None) -> None:
         "musique": list(musique(musique_pairs(mus_dev, 600, args.seed), seed=args.seed)),
         "boardgame": list(boardgame(bg_valid)),
         # HELD OUT: never in training, the pre-registered transfer test
-        "hotpotqa": list(hotpotqa(load_dataset("hotpotqa/hotpot_qa", "distractor",
-                                               split="validation"))),
+        "hotpotqa": list(
+            hotpotqa(load_dataset("hotpotqa/hotpot_qa", "distractor", split="validation"))
+        ),
     }
+
     def some(xs: list[Example], n: int) -> list[Example]:
         return rng.sample(xs, min(n, len(xs)))
 

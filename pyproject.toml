@@ -177,7 +177,11 @@ dependencies = [
 ]
 
 [tool.hatch.envs.lint.scripts]
-check = ["ruff check {args:.}", "mypy ./src ./training --exclude training/tests"]
+check = [
+    "ruff format --check {args:.}",
+    "ruff check {args:.}",
+    "mypy ./src ./training --exclude training/tests",
+]
 
 # Conventional Commits, matching the PR-title gate in
 # .github/workflows/pr-title.yml. Enforced locally by the commit-msg hook in

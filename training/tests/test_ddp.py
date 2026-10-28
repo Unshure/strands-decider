@@ -16,6 +16,7 @@ Those end-to-end tests launch processes and take minutes, so they are marked
 
 This file is also the torchrun worker: `python tests/test_ddp.py worker <cfg.json>`.
 """
+
 from __future__ import annotations
 
 import json
@@ -36,10 +37,12 @@ from training.train import TrainConfig
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-WORDS = ("the contract states that payment is due within thirty days of delivery and any "
-         "dispute must be raised in writing before the invoice date which party breached "
-         "clause obligations notice termination refund shipping order customer seller "
-         "question answer evidence claim supported refuted unknown true false option").split()
+WORDS = (
+    "the contract states that payment is due within thirty days of delivery and any "
+    "dispute must be raised in writing before the invoice date which party breached "
+    "clause obligations notice termination refund shipping order customer seller "
+    "question answer evidence claim supported refuted unknown true false option"
+).split()
 
 
 # ---------------------------------------------------------------- fixtures
@@ -62,17 +65,19 @@ def _examples(n: int, seed: int) -> list:
         else:
             m = rng.choice([3, 5])
             options = [[str(j), _text(rng, 3)] for j in range(m)]
-        out.append(Example(
-            kind=kind,
-            # lengths from a few words to a few hundred, so length grouping matters
-            state=_text(rng, rng.choice([5, 20, 60, 150])),
-            instructions=_text(rng, 6),
-            options=options,
-            label=rng.randrange(len(options)),
-            task=f"task{k % 4}",
-            weight=rng.choice([1.0, 1.0, 0.5, 2.0]),
-            instruction_variants=[_text(rng, 6)] if k % 2 else [],
-        ))
+        out.append(
+            Example(
+                kind=kind,
+                # lengths from a few words to a few hundred, so length grouping matters
+                state=_text(rng, rng.choice([5, 20, 60, 150])),
+                instructions=_text(rng, 6),
+                options=options,
+                label=rng.randrange(len(options)),
+                task=f"task{k % 4}",
+                weight=rng.choice([1.0, 1.0, 0.5, 2.0]),
+                instruction_variants=[_text(rng, 6)] if k % 2 else [],
+            )
+        )
     return out
 
 
@@ -83,8 +88,11 @@ def _tokenizer_file(path: str, examples: list, vocab_size: int = 400) -> None:
     tok.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
     tok.decoder = decoders.ByteLevel()
     tok.post_processor = processors.ByteLevel(trim_offsets=True)
-    trainer = trainers.BpeTrainer(vocab_size=vocab_size, special_tokens=["<pad>", "<eos>"],
-                                  initial_alphabet=pre_tokenizers.ByteLevel.alphabet())
+    trainer = trainers.BpeTrainer(
+        vocab_size=vocab_size,
+        special_tokens=["<pad>", "<eos>"],
+        initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
+    )
     from strands_decider.prompting import build_prompt
 
     texts = [build_prompt(ex.state, ex.to_question())[0] for ex in examples]
@@ -98,18 +106,83 @@ def _load_tokenizer(path: str):
     return PreTrainedTokenizerFast(tokenizer_file=path, pad_token="<pad>", eos_token="<eos>")
 
 
+def _qwen3_config(vocab_size: int):
+    from transformers import Qwen3Config
+
+    return Qwen3Config(
+        vocab_size=vocab_size,
+        hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+        max_position_embeddings=4096,
+        tie_word_embeddings=True,
+    )
+
+
+def _tiny_torso(out: str, tokenizer_path: str) -> str:
+    """Save a tiny random Qwen3 torso, the base model of `_tiny_checkpoint`, to `out`."""
+    from transformers import Qwen3Model
+
+    with torch.random.fork_rng():
+        torch.manual_seed(0)
+        Qwen3Model(_qwen3_config(len(_load_tokenizer(tokenizer_path)))).save_pretrained(out)
+    return out
+
+
+def _load_saved_torso(torso_dir: str):
+    """Stands in for StrandsDeciderModel._load_torso: the torso `_tiny_torso` saved."""
+    from transformers import Qwen3Model
+
+    return lambda config, *a: Qwen3Model.from_pretrained(torso_dir)
+
+
+def _tiny_checkpoint(out: str, tokenizer_path: str, torso_dir: str, seed: int = 0, **over) -> str:
+    """A checkpoint as training saves one, over the torso in `torso_dir`: a LoRA adapter and
+    a pointer head with random weights (lora_B and the head's LayerNorm too, so that each
+    changes the outputs) and fitted temperatures."""
+    from strands_decider.modeling import StrandsDeciderConfig, StrandsDeciderModel
+
+    cfg = StrandsDeciderConfig(
+        **{
+            **dict(
+                base_model="tiny",
+                pointer_dim=16,
+                lora_r=2,
+                lora_alpha=4,
+                lora_dropout=0.0,
+                torch_dtype="float32",
+                max_length=2048,
+                temperature=1.7,
+                temperature_by_kind={"choice": 0.8},
+            ),
+            **over,
+        }
+    )
+    with torch.random.fork_rng():
+        torch.manual_seed(seed)
+        torso = _load_saved_torso(torso_dir)(cfg)
+        model = StrandsDeciderModel(cfg, torso, _load_tokenizer(tokenizer_path))
+        model.attach_lora()
+        with torch.no_grad():
+            for n, p in model.named_parameters():
+                if "lora_" in n or n.startswith("head.norm"):
+                    p.normal_(std=0.5)
+    model.save_pretrained(out)
+    return out
+
+
 def _tiny_model_factory(tokenizer_path: str):
     """Stands in for StrandsDeciderModel.from_pretrained_base: same construction, tiny torso."""
-    from transformers import Qwen3Config, Qwen3Model
+    from transformers import Qwen3Model
 
     from strands_decider.modeling import StrandsDeciderModel
 
     def build(config, *, device_map=None, attn_implementation=None):
         tok = _load_tokenizer(tokenizer_path)
-        qc = Qwen3Config(vocab_size=len(tok), hidden_size=32, intermediate_size=64,
-                         num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2,
-                         head_dim=8, max_position_embeddings=4096, tie_word_embeddings=True)
-        torso = Qwen3Model(qc)  # float32, randomly initialised after train()'s seed
+        torso = Qwen3Model(_qwen3_config(len(tok)))  # float32, random after train()'s seed
         config.lora_dropout = 0.0  # dropout masks cannot match across world sizes
         model = StrandsDeciderModel(config, torso, tok)
         if config.use_lora:
@@ -150,19 +223,12 @@ def worker(cfg_path: str) -> None:
 
     with open(cfg_path, encoding="utf-8") as fh:
         spec = json.load(fh)
-    StrandsDeciderModel.from_pretrained_base = staticmethod(_tiny_model_factory(spec.pop("tokenizer")))
-    ref_tokenizer = spec.pop("ref_tokenizer", None)
-    if ref_tokenizer:  # kl_frozen_reference: a tiny checkpoint, the same on every rank
-
-        def load(path, **k):
-            from strands_decider.modeling import StrandsDeciderConfig
-
-            with torch.random.fork_rng():
-                torch.manual_seed(123)
-                cfg = StrandsDeciderConfig(base_model="tiny", head_type="pointer", pointer_dim=16)
-                return _tiny_model_factory(ref_tokenizer)(cfg)
-
-        StrandsDeciderModel.load = staticmethod(load)
+    StrandsDeciderModel.from_pretrained_base = staticmethod(
+        _tiny_model_factory(spec.pop("tokenizer"))
+    )
+    torso_dir = spec.pop("torso", None)
+    if torso_dir:  # init_from: the base model of the checkpoint
+        StrandsDeciderModel._load_torso = staticmethod(_load_saved_torso(torso_dir))
     rank = int(os.environ.get("RANK", "0"))
 
     grads, init = [], []
@@ -184,24 +250,17 @@ def worker(cfg_path: str) -> None:
     def call(self, batch):
         out = real_call(self, batch)
         if self.train:
-            rows[-1].extend([
-                (tuple(ids[m.bool()].tolist()), int(lab))
-                for ids, m, lab in zip(out["input_ids"], out["attention_mask"], out["labels"],
-                                       strict=True)
-            ])
+            rows[-1].extend(
+                [
+                    (tuple(ids[m.bool()].tolist()), int(lab))
+                    for ids, m, lab in zip(
+                        out["input_ids"], out["attention_mask"], out["labels"], strict=True
+                    )
+                ]
+            )
         return out
 
     SystemOneCollator.__call__ = call
-    real_reference = T._frozen_reference
-
-    def reference(*a, **k):  # renders every row ahead of training: not what a step trains on
-        SystemOneCollator.__call__ = real_call
-        try:
-            return real_reference(*a, **k)
-        finally:
-            SystemOneCollator.__call__ = call
-
-    T._frozen_reference = reference
     if spec.pop("skew_rank1", False) and rank == 1:  # this rank reads a longer last row
         real_load = T.load_examples
 
@@ -213,8 +272,9 @@ def worker(cfg_path: str) -> None:
         T.load_examples = skewed
     cfg = TrainConfig(**spec)
     T.train(cfg)
-    torch.save({"grads": grads, "rows": rows, "init": init},
-               os.path.join(cfg.output_dir, f"rank{rank}.pt"))
+    torch.save(
+        {"grads": grads, "rows": rows, "init": init}, os.path.join(cfg.output_dir, f"rank{rank}.pt")
+    )
 
 
 def _free_port() -> int:
@@ -226,19 +286,36 @@ def _free_port() -> int:
 def _run(corpus, tmp_path, world: int, *, expect_ok: bool = True, **over) -> dict:
     out = tmp_path / f"w{world}"
     spec = dict(
-        train_files=[str(corpus / "train.jsonl")], val_files=[str(corpus / "val.jsonl")],
-        base_model="tiny", num_slots=24, head_type="pointer", pointer_dim=16,
-        kl_frozen_weight=0.3, teacher_file=str(corpus / "teacher.jsonl"), teacher_weight=1.0,
-        head_dropout=0.0, max_length=2048, micro_batch_size=8, grad_accum=4, epochs=2,
-        group_by_length=True, length_group_mega=2, log_every=1, eval_every=4,
-        output_dir=str(out), seed=0, tokenizer=str(corpus / "tokenizer.json"),
+        train_files=[str(corpus / "train.jsonl")],
+        val_files=[str(corpus / "val.jsonl")],
+        base_model="tiny",
+        pointer_dim=16,
+        teacher_file=str(corpus / "teacher.jsonl"),
+        teacher_weight=1.0,
+        head_dropout=0.0,
+        max_length=2048,
+        micro_batch_size=8,
+        grad_accum=4,
+        epochs=2,
+        group_by_length=True,
+        length_group_mega=2,
+        log_every=1,
+        eval_every=4,
+        output_dir=str(out),
+        seed=0,
+        tokenizer=str(corpus / "tokenizer.json"),
     )
     spec.update(over)
     tmp_path.mkdir(parents=True, exist_ok=True)
     cfg_path = tmp_path / f"cfg{world}.json"
     cfg_path.write_text(json.dumps(spec))
-    env = {**os.environ, "PYTHONPATH": os.path.join(ROOT, "src"), "OMP_NUM_THREADS": "1",
-           "TOKENIZERS_PARALLELISM": "false"}
+    # src/ for strands_decider, the root for the training package (not in the wheel)
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join([os.path.join(ROOT, "src"), ROOT]),
+        "OMP_NUM_THREADS": "1",
+        "TOKENIZERS_PARALLELISM": "false",
+    }
     for k in ("RANK", "LOCAL_RANK", "WORLD_SIZE", "MASTER_ADDR", "MASTER_PORT"):
         env.pop(k, None)
     me = os.path.abspath(__file__)
@@ -247,9 +324,18 @@ def _run(corpus, tmp_path, world: int, *, expect_ok: bool = True, **over) -> dic
     else:
         # Static rendezvous on loopback: --standalone resolves the hostname, which a
         # laptop off its network may not.
-        cmd = [sys.executable, "-m", "torch.distributed.run", "--nnodes=1",
-               f"--nproc_per_node={world}", "--master-addr=127.0.0.1",
-               f"--master-port={_free_port()}", me, "worker", str(cfg_path)]
+        cmd = [
+            sys.executable,
+            "-m",
+            "torch.distributed.run",
+            "--nnodes=1",
+            f"--nproc_per_node={world}",
+            "--master-addr=127.0.0.1",
+            f"--master-port={_free_port()}",
+            me,
+            "worker",
+            str(cfg_path),
+        ]
         if sys.platform == "darwin":
             env.setdefault("GLOO_SOCKET_IFNAME", "lo0")
     res = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=300)
@@ -282,9 +368,14 @@ def _assert_same_run(ref: dict, got: dict, world: int, *, rtol: float = 1e-4) ->
     # 2. initial weights identical on every rank and to 1-process; gradients after the
     #    all-reduce identical on every rank and equal to 1-process
     for r in got["ranks"]:
-        assert all(torch.equal(x, y) for x, y in zip(r["init"], ref["ranks"][0]["init"], strict=True))
-        assert all(torch.equal(x, y) for a, b in zip(r["grads"], got["ranks"][0]["grads"], strict=True)
-                   for x, y in zip(a, b, strict=True))
+        assert all(
+            torch.equal(x, y) for x, y in zip(r["init"], ref["ranks"][0]["init"], strict=True)
+        )
+        assert all(
+            torch.equal(x, y)
+            for a, b in zip(r["grads"], got["ranks"][0]["grads"], strict=True)
+            for x, y in zip(a, b, strict=True)
+        )
     g_ref = ref["ranks"][0]["grads"]
     for s, (a, b) in enumerate(zip(got["ranks"][0]["grads"], g_ref, strict=True)):
         num = sum(float((x - y).pow(2).sum()) for x, y in zip(a, b, strict=True)) ** 0.5
@@ -315,12 +406,17 @@ def test_ddp_matches_single_process(corpus, plain_run, tmp_path, world):
 
 
 @pytest.mark.distributed
-@pytest.mark.parametrize("over", [
-    dict(ema_decay=0.9, save_every=3, val_split_seed=5, val_files=[]),  # EMA; a fixed split
-    dict(group_by_length=False, eval_every=3),                 # epoch 2's order is drawn after evals
-    dict(epochs=1, max_steps=10, eval_every=3, save_every=2),  # runs out of data; saves on rank 0
-    dict(kl_direction="reverse"),                              # both KL terms reversed
-])
+@pytest.mark.parametrize(
+    "over",
+    [
+        dict(ema_decay=0.9, save_every=3, val_split_seed=5, val_files=[]),  # EMA; a fixed split
+        dict(group_by_length=False, eval_every=3),  # epoch 2's order is drawn after evals
+        dict(
+            epochs=1, max_steps=10, eval_every=3, save_every=2
+        ),  # runs out of data; saves on rank 0
+        dict(kl_direction="reverse"),  # both KL terms reversed
+    ],
+)
 def test_ddp_matches_single_process_variants(corpus, tmp_path, over):
     ref = _run(corpus, tmp_path / "a", 1, **over)
     if "max_steps" in over:  # the 2 left-over micro-batches never step
@@ -329,37 +425,15 @@ def test_ddp_matches_single_process_variants(corpus, tmp_path, over):
 
 
 @pytest.mark.distributed
-@pytest.mark.parametrize("world", [1, 3, 8])
-def test_precomputed_frozen_reference_matches_single_process(corpus, plain_run, tmp_path, world):
-    """precompute_frozen_kl: the same rows, rendering, gradients and losses."""
-    got = _run(corpus, tmp_path, world, precompute_frozen_kl=True)
-    assert "frozen-KL reference for 32 micro-batches" in got["stdout"]
-    _assert_same_run(plain_run, got, world)
-
-
-@pytest.mark.distributed
-@pytest.mark.parametrize("tokenizer", ["tokenizer.json", "other_tokenizer.json"])
-def test_ddp_frozen_reference_checkpoint_matches_single_process(corpus, tmp_path, tokenizer):
-    """kl_frozen_reference: each rank renders its micro-batches with the reference's tokenizer."""
-    over = dict(precompute_frozen_kl=True, kl_frozen_reference="tiny-ref",
-                ref_tokenizer=str(corpus / tokenizer))
+def test_ddp_init_from_matches_single_process(corpus, tmp_path):
+    """init_from a trained checkpoint."""
+    tok = str(corpus / "tokenizer.json")
+    torso = _tiny_torso(str(tmp_path / "torso"), tok)
+    ckpt = _tiny_checkpoint(str(tmp_path / "ckpt"), tok, torso)
+    over = dict(init_from=ckpt, torso=torso, epochs=1)
     ref = _run(corpus, tmp_path / "a", 1, **over)
-    assert "frozen-KL reference: tiny-ref" in ref["stdout"]
+    assert f"continuing from {ckpt}" in ref["stdout"]
     _assert_same_run(ref, _run(corpus, tmp_path / "b", 3, **over), 3)
-
-
-@pytest.fixture(scope="module")
-def kl_only_plain_run(corpus, tmp_path_factory):
-    return _run(corpus, tmp_path_factory.mktemp("klonly"), 1,
-                kl_only_files=[str(corpus / "klonly.jsonl")], kl_only_weight=0.7)
-
-
-@pytest.mark.distributed
-@pytest.mark.parametrize("world", [3, 8])
-def test_ddp_matches_single_process_kl_only_rows(corpus, kl_only_plain_run, tmp_path, world):
-    got = _run(corpus, tmp_path, world, kl_only_files=[str(corpus / "klonly.jsonl")],
-               kl_only_weight=0.7)
-    _assert_same_run(kl_only_plain_run, got, world)
 
 
 @pytest.mark.distributed
@@ -393,8 +467,9 @@ def _step_batches(seed: int = 0):
     from training.data.sampling import LengthGroupedBatchSampler
 
     rng = random.Random(seed)
-    lengths = [rng.choice([rng.randrange(150, 900)] * 9 + [rng.randrange(2000, 9000)])
-               for _ in range(4000)]
+    lengths = [
+        rng.choice([rng.randrange(150, 900)] * 9 + [rng.randrange(2000, 9000)]) for _ in range(4000)
+    ]
     return lengths, LengthGroupedBatchSampler(lengths, 8, mega=50, seed=seed).batches(0)
 
 
@@ -403,7 +478,7 @@ def test_plan_shares_out_exactly_the_steps_rows(world):
     """Every row of the step exactly once; each rank >= 1 slice; no slice > a micro-batch."""
     lengths, batches = _step_batches()
     for s in range(0, len(batches) // 4, 7):
-        step = batches[4 * s: 4 * s + 4]
+        step = batches[4 * s : 4 * s + 4]
         plan = plan_step(step, lengths, world)
         assert len(plan) == world and all(plan)
         seen = sorted((j, i) for p in plan for j, a, b in p for i in range(a, b))
@@ -427,11 +502,11 @@ def test_plan_balances_better_than_even_halves():
 
     planned, halves = [], []
     for s in range(len(batches) // 4):
-        step = batches[4 * s: 4 * s + 4]
+        step = batches[4 * s : 4 * s + 4]
         plan = plan_step(step, lengths, 8)
         planned.append(max(sum(load(step[j][a:b]) for j, a, b in p) for p in plan))
-        halves.append(max(load(b[h:h + 4]) for b in step for h in (0, 4)))
-    assert sum(planned) < 0.8 * sum(halves), (sum(planned) / sum(halves))
+        halves.append(max(load(b[h : h + 4]) for b in step for h in (0, 4)))
+    assert sum(planned) < 0.8 * sum(halves), sum(planned) / sum(halves)
 
 
 def test_skipping_rows_matches_collating_them(corpus):
@@ -440,13 +515,13 @@ def test_skipping_rows_matches_collating_them(corpus):
 
     tok = _load_tokenizer(str(corpus / "tokenizer.json"))
     rows = _examples(64, seed=5)
-    cfg = CollatorConfig(num_slots=24, head_type="pointer", seed=7, max_length=2048)
+    cfg = CollatorConfig(seed=7, max_length=2048)
     full, part = SystemOneCollator(tok, cfg), SystemOneCollator(tok, cfg)
     for b in range(0, 64, 8):
-        whole = full(rows[b:b + 8])
-        part.skip(rows[b:b + 3])
-        mid = part(rows[b + 3:b + 6])
-        part.skip(rows[b + 6:b + 8])
+        whole = full(rows[b : b + 8])
+        part.skip(rows[b : b + 3])
+        mid = part(rows[b + 3 : b + 6])
+        part.skip(rows[b + 6 : b + 8])
         for j in range(3):
             a, m = whole["input_ids"][3 + j], whole["attention_mask"][3 + j].bool()
             c, mc = mid["input_ids"][j], mid["attention_mask"][j].bool()
@@ -479,8 +554,10 @@ def _stub_teacher(corpus, monkeypatch, width_term=0.0):
     import training.data.teacher as teacher
 
     tok = _load_tokenizer(str(corpus / "tokenizer.json"))
-    tok.chat_template = ("{% for m in messages %}<{{ m.role }}>{{ m.content }}\n{% endfor %}"
-                         "{% if add_generation_prompt %}<assistant>{% endif %}")
+    tok.chat_template = (
+        "{% for m in messages %}<{{ m.role }}>{{ m.content }}\n{% endfor %}"
+        "{% if add_generation_prompt %}<assistant>{% endif %}"
+    )
     model = _StubLM(len(tok), width_term)
     monkeypatch.setattr(teacher, "load", lambda *a, **k: (model, tok))
     return teacher.main
@@ -500,8 +577,7 @@ def test_teacher_shards_merge_to_the_single_process_file(corpus, tmp_path, monke
             main([*base, "--out", out, "--num-shards", str(n), "--shard-index", str(i)])
         main([*base, "--out", out, "--num-shards", str(n), "--merge"])
         assert open(out).read() == open(tmp_path / "one.jsonl").read()
-        assert (open(out[:-6] + "_train.jsonl").read()
-                == open(tmp_path / "one_train.jsonl").read())
+        assert open(out[:-6] + "_train.jsonl").read() == open(tmp_path / "one_train.jsonl").read()
     lines = open(tmp_path / "one.jsonl").read().splitlines()
     assert 0 < len(lines) <= 150  # rows with >16 options get no teacher
 
@@ -518,7 +594,7 @@ def test_teacher_shard_resumes_and_merge_refuses_unfinished(corpus, tmp_path, mo
     from training.data import shards
 
     s1 = shards.path(out, 1, 2)
-    keep = open(s1).read().splitlines()[: 10]
+    keep = open(s1).read().splitlines()[:10]
     open(s1, "w").write("\n".join(keep) + "\n" + keep[-1][:7])
     os.remove(s1 + ".done")
     with pytest.raises(SystemExit):
@@ -536,20 +612,22 @@ def test_replay_shards_merge_to_the_single_process_file(corpus, tmp_path, monkey
         # A row's logits depend on its text and on its batch (the batch's widest row).
         out, slots = [], []
         for b in range(0, len(examples), batch_size):
-            chunk = examples[b:b + batch_size]
+            chunk = examples[b : b + batch_size]
             width = max(len(ex.state) for ex in chunk)
             for ex in chunk:
                 g = torch.Generator().manual_seed(len(ex.state) * 31 + ex.n_options)
                 row = torch.randn(24, generator=g) + 1e-3 * width
-                row[ex.n_options:] = MASK_VALUE
+                row[ex.n_options :] = MASK_VALUE
                 out.append(row)
                 slots.append(ex.n_options)
         return torch.stack(out), None, torch.tensor(slots), examples
 
     monkeypatch.setattr(evaluate, "collect_logits", fake_collect)
-    monkeypatch.setattr(StrandsDeciderModel, "load",
-                        staticmethod(lambda path, **k: SimpleNamespace(
-                            config=SimpleNamespace(max_length=3072))))
+    monkeypatch.setattr(
+        StrandsDeciderModel,
+        "load",
+        staticmethod(lambda path, **k: SimpleNamespace(config=SimpleNamespace(max_length=3072))),
+    )
     import training.data.replay as replay
 
     base = ["ckpt", "--src", str(corpus / "train.jsonl"), "--shift-by", str(corpus / "val.jsonl")]

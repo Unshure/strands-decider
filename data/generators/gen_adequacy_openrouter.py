@@ -36,6 +36,7 @@ Usage:
     export AWS_BEARER_TOKEN_BEDROCK=...
     python gen_adequacy_openrouter.py --backend bedrock --region us-west-2 --out gen_adequacy_bedrock --batches 5
 """
+
 from __future__ import annotations
 
 import argparse
@@ -73,24 +74,23 @@ DEFECTS = {
     "factual_error": "a confident, wrong fact or figure that the answer depends on",
     "wrong_question": "a fluent answer to a nearby but different question",
     "missed_constraint": "ignores one explicit constraint in the request (length, format, "
-                         "audience, something to exclude) while doing the rest well",
+    "audience, something to exclude) while doing the rest well",
     "incomplete": "the request has several parts; one part is skipped or only gestured at",
     "calculation_error": "a wrong step in arithmetic or logic gives a wrong result",
     "needless_refusal": "declines, or hedges without answering, although the request is "
-                        "benign and answerable",
+    "benign and answerable",
     "ignores_context": "contradicts or ignores information the user supplied in the request",
     "accepts_false_premise": "goes along with a false premise in the request, so the answer "
-                             "is wrong",
+    "is wrong",
 }
 GOOD_KINDS = {
     "plain": "a good, complete, correct answer",
     "terse": "short, but fully answers everything asked",
-    "informal": "casual or unpolished (a typo or two, loose structure), but correct and "
-                "complete",
+    "informal": "casual or unpolished (a typo or two, loose structure), but correct and complete",
     "corrects_premise": "the request contains a false premise; the response points it out "
-                        "and then gives the correct answer",
+    "and then gives the correct answer",
     "states_assumption": "the request is slightly ambiguous; the response states a reasonable "
-                         "assumption and answers under it",
+    "assumption and answers under it",
     "caveated": "correct and complete, with a caveat or two that is warranted",
 }
 
@@ -162,38 +162,58 @@ def spec_for(i: int, seed: int, n: int = 6) -> dict:
     goods = ["plain", *rng.sample(sorted(set(GOOD_KINDS) - {"plain"}), n // 2 - 1)]
     rng.shuffle(goods)
     kinds = [defects.pop() if v == "inadequate" else goods.pop() for v in verdicts]
-    return {"id": f"ade{i:05d}", "category": category, "verdicts": verdicts, "kinds": kinds,
-            "split": "eval" if category in HELDOUT_CATEGORIES else "train"}
+    return {
+        "id": f"ade{i:05d}",
+        "category": category,
+        "verdicts": verdicts,
+        "kinds": kinds,
+        "split": "eval" if category in HELDOUT_CATEGORIES else "train",
+    }
 
 
 def write_one(args, spec: dict) -> dict:
     items = "\n".join(
         f"{k + 1}. {v.upper()}, kind {kind}: "
         f"{DEFECTS[kind] if v == 'inadequate' else GOOD_KINDS[kind]}."
-        for k, (v, kind) in enumerate(zip(spec["verdicts"], spec["kinds"], strict=False)))
+        for k, (v, kind) in enumerate(zip(spec["verdicts"], spec["kinds"], strict=False))
+    )
     prompt = WRITER_PROMPT.format(n=len(spec["verdicts"]), category=spec["category"], items=items)
     last = None
     for _ in range(3):
         try:
-            text, provider = gd.chat(args, args.writer, SYSTEM_WRITER, prompt,
-                                     args.writer_max_tokens, args.writer_temperature)
+            text, provider = gd.chat(
+                args,
+                args.writer,
+                SYSTEM_WRITER,
+                prompt,
+                args.writer_max_tokens,
+                args.writer_temperature,
+            )
             got = gd.parse_json(text).get("items", [])
             good, dropped = [], []
-            for k, it in enumerate(got[:len(spec["verdicts"])]):
+            for k, it in enumerate(got[: len(spec["verdicts"])]):
                 why = None
-                if not isinstance(it, dict) or not all(it.get(x) for x in
-                                                       ("verdict", "request", "response", "flaw")):
+                if not isinstance(it, dict) or not all(
+                    it.get(x) for x in ("verdict", "request", "response", "flaw")
+                ):
                     why = "missing field"
                 elif str(it["verdict"]).strip().lower() != spec["verdicts"][k]:
                     why = "verdict differs from the one assigned"
                 elif not 25 <= len(str(it["response"]).split()) <= 500:
                     why = "response length"
-                (dropped if why else good).append(why or {**it, "kind": spec["kinds"][k],
-                                                          "verdict": spec["verdicts"][k]})
+                (dropped if why else good).append(
+                    why or {**it, "kind": spec["kinds"][k], "verdict": spec["verdicts"][k]}
+                )
             if not good:
                 raise ValueError(f"no well-formed items: {dropped}")
-            return {**spec, "items": good, "dropped": dropped, "backend": args.backend,
-                    "writer": args.writer, "provider": provider}
+            return {
+                **spec,
+                "items": good,
+                "dropped": dropped,
+                "backend": args.backend,
+                "writer": args.writer,
+                "provider": provider,
+            }
         except (ValueError, json.JSONDecodeError) as e:
             last = e
     raise RuntimeError(f"writer failed 3 times: {last}")
@@ -201,20 +221,40 @@ def write_one(args, spec: dict) -> dict:
 
 def verify_one(args, model: str, batch: dict, qi: int, attempt: int) -> dict:
     it = batch["items"][qi]
-    text, provider = gd.chat(args, model, SYSTEM_VERIFIER,
-                             VERIFY_PROMPT.format(request=it["request"], response=it["response"]),
-                             args.verify_max_tokens, args.verify_temperature)
+    text, provider = gd.chat(
+        args,
+        model,
+        SYSTEM_VERIFIER,
+        VERIFY_PROMPT.format(request=it["request"], response=it["response"]),
+        args.verify_max_tokens,
+        args.verify_temperature,
+    )
     m = re.findall(r"ANSWER:\s*\**\s*(yes|no)\b", text, re.I)
     answer = {"yes": "adequate", "no": "inadequate"}[m[-1].lower()] if m else None
-    return {"id": batch["id"], "q": qi, "attempt": attempt, "backend": args.backend, "model": model,
-            "provider": provider, "answer": answer, "tail": text[-600:]}
+    return {
+        "id": batch["id"],
+        "q": qi,
+        "attempt": attempt,
+        "backend": args.backend,
+        "model": model,
+        "provider": provider,
+        "answer": answer,
+        "tail": text[-600:],
+    }
 
 
 def to_example(it: dict) -> dict:
     state = f"Request:\n{it['request'].strip()}\n\nResponse:\n{it['response'].strip()}"
-    return {"kind": "noul", "state": state, "instructions": QUESTION, "options": OPTIONS,
-            "label": int(it["verdict"] == "adequate"), "task": TASK, "weight": 1.0,
-            "instruction_variants": VARIANTS}
+    return {
+        "kind": "noul",
+        "state": state,
+        "instructions": QUESTION,
+        "options": OPTIONS,
+        "label": int(it["verdict"] == "adequate"),
+        "task": TASK,
+        "weight": 1.0,
+        "instruction_variants": VARIANTS,
+    }
 
 
 def main() -> None:
@@ -222,7 +262,9 @@ def main() -> None:
     ap.add_argument("--out", default="gen_adequacy_pilot")
     ap.add_argument("--batches", type=int, default=20, help="six items per batch")
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--writer", default=None, help="default: the backend's (llm_client.DEFAULT_MODELS)")
+    ap.add_argument(
+        "--writer", default=None, help="default: the backend's (llm_client.DEFAULT_MODELS)"
+    )
     ap.add_argument("--verify-models", default=None, help="comma-separated; default: the backend's")
     ap.add_argument("--reasoning-effort", default="high", choices=["low", "medium", "high", "none"])
     ap.add_argument("--quantizations", default="bf16,fp16,fp32,fp8")
@@ -231,10 +273,16 @@ def main() -> None:
     ap.add_argument("--max-cost", type=float, default=float("inf"))
     ap.add_argument("--timeout", type=float, default=900)
     ap.add_argument("--writer-temperature", type=float, default=0.8)
-    ap.add_argument("--writer-max-tokens", type=int, default=None,
-                    help="default: the model's cap in llm_client.MODELS, else 24000")
+    ap.add_argument(
+        "--writer-max-tokens",
+        type=int,
+        default=None,
+        help="default: the model's cap in llm_client.MODELS, else 24000",
+    )
     ap.add_argument("--verify-temperature", type=float, default=0.6)
-    ap.add_argument("--verify-max-tokens", type=int, default=None, help="as --writer-max-tokens, else 12000")
+    ap.add_argument(
+        "--verify-max-tokens", type=int, default=None, help="as --writer-max-tokens, else 12000"
+    )
     ap.add_argument("--stage", choices=["all", "write", "verify", "export"], default="all")
     llm.add_args(ap)
     args = ap.parse_args()
@@ -248,7 +296,11 @@ def main() -> None:
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    bat_path, ver_path, fail_path = out / "batches.jsonl", out / "verify.jsonl", out / "failures.jsonl"
+    bat_path, ver_path, fail_path = (
+        out / "batches.jsonl",
+        out / "verify.jsonl",
+        out / "failures.jsonl",
+    )
     verifiers = args.verify_models.split(",")
     if len(verifiers) == 1:
         verifiers *= 2
@@ -262,20 +314,32 @@ def main() -> None:
     batches = {b["id"]: b for b in gd.read_jsonl(bat_path)}
     if args.stage != "export":
         verified = {(v["id"], v["q"], v["attempt"]) for v in gd.read_jsonl(ver_path)}
-        writes = deque(s for s in (spec_for(i, args.seed) for i in range(args.batches))
-                       if s["id"] not in batches) if args.stage in ("all", "write") else deque()
+        writes = (
+            deque(
+                s
+                for s in (spec_for(i, args.seed) for i in range(args.batches))
+                if s["id"] not in batches
+            )
+            if args.stage in ("all", "write")
+            else deque()
+        )
         checks: deque = deque()
 
         def queue_checks(b: dict) -> None:
             if args.stage in ("all", "verify"):
-                checks.extend((b, qi, a) for qi in range(len(b["items"]))
-                              for a in range(1, len(verifiers) + 1)
-                              if (b["id"], qi, a) not in verified)
+                checks.extend(
+                    (b, qi, a)
+                    for qi in range(len(b["items"]))
+                    for a in range(1, len(verifiers) + 1)
+                    if (b["id"], qi, a) not in verified
+                )
 
         for b in batches.values():
             queue_checks(b)
-        print(f"write {len(writes)} batches ({len(batches)} done); verify {len(checks)} "
-              f"judgements queued; up to ${args.max_cost:.2f}")
+        print(
+            f"write {len(writes)} batches ({len(batches)} done); verify {len(checks)} "
+            f"judgements queued; up to ${args.max_cost:.2f}"
+        )
         n_w = n_v = 0
         with ThreadPoolExecutor(args.workers) as ex:
             running: dict = {}
@@ -283,7 +347,10 @@ def main() -> None:
                 while len(running) < args.workers and gd.USAGE["cost"] < args.max_cost:
                     if checks:
                         b, qi, a = checks.popleft()
-                        running[ex.submit(verify_one, args, verifiers[a - 1], b, qi, a)] = ("v", (b, qi, a))
+                        running[ex.submit(verify_one, args, verifiers[a - 1], b, qi, a)] = (
+                            "v",
+                            (b, qi, a),
+                        )
                     elif writes:
                         s = writes.popleft()
                         running[ex.submit(write_one, args, s)] = ("w", s)
@@ -305,23 +372,43 @@ def main() -> None:
                             append(ver_path, row)
                             n_v += 1
                     except Exception as e:
-                        info = {"id": job["id"]} if kind == "w" else \
-                            {"id": job[0]["id"], "q": job[1], "attempt": job[2]}
-                        append(fail_path, {"stage": "write" if kind == "w" else "verify", **info,
-                                           "error": repr(e)[:2000]})
+                        info = (
+                            {"id": job["id"]}
+                            if kind == "w"
+                            else {"id": job[0]["id"], "q": job[1], "attempt": job[2]}
+                        )
+                        append(
+                            fail_path,
+                            {
+                                "stage": "write" if kind == "w" else "verify",
+                                **info,
+                                "error": repr(e)[:2000],
+                            },
+                        )
                     if (n_w + n_v) % 25 == 0:
-                        print(f"  written {n_w}, verified {n_v}, {len(writes)} + {len(checks)} "
-                              f"queued, ${gd.USAGE['cost']:.2f}, {time.time() - t0:.0f} s", flush=True)
+                        print(
+                            f"  written {n_w}, verified {n_v}, {len(writes)} + {len(checks)} "
+                            f"queued, ${gd.USAGE['cost']:.2f}, {time.time() - t0:.0f} s",
+                            flush=True,
+                        )
         if gd.USAGE["cost"] >= args.max_cost and (writes or checks):
-            print(f"stopped at the cost cap: {len(writes)} batches and {len(checks)} judgements "
-                  f"not started; rerun with a higher --max-cost to resume")
+            print(
+                f"stopped at the cost cap: {len(writes)} batches and {len(checks)} judgements "
+                f"not started; rerun with a higher --max-cost to resume"
+            )
 
     if args.stage in ("all", "export"):
         answers: dict = {}
         for v in gd.read_jsonl(ver_path):
             answers.setdefault((v["id"], v["q"]), {})[v["attempt"]] = v["answer"]
         kept = {"train": [], "eval": []}
-        stats = {"batches": len(batches), "items": 0, "kept": 0, "by_kind": {}, "dropped_at_write": {}}
+        stats = {
+            "batches": len(batches),
+            "items": 0,
+            "kept": 0,
+            "by_kind": {},
+            "dropped_at_write": {},
+        }
         for b in batches.values():
             for why in b.get("dropped", []):
                 stats["dropped_at_write"][why] = stats["dropped_at_write"].get(why, 0) + 1
@@ -341,17 +428,21 @@ def main() -> None:
                     fh.write(json.dumps(r, ensure_ascii=False) + "\n")
         n, k = stats["items"], stats["kept"]
         yes = {s: sum(r["label"] for r in rows) for s, rows in kept.items()}
-        print(f"export: {len(batches)} batches, {n} items, kept {k} ({k / max(n, 1):.0%}); "
-              f"train {len(kept['train'])} ({yes['train']} adequate), "
-              f"eval {len(kept['eval'])} ({yes['eval']} adequate)")
+        print(
+            f"export: {len(batches)} batches, {n} items, kept {k} ({k / max(n, 1):.0%}); "
+            f"train {len(kept['train'])} ({yes['train']} adequate), "
+            f"eval {len(kept['eval'])} ({yes['eval']} adequate)"
+        )
         for kind, (a, b) in sorted(stats["by_kind"].items()):
             print(f"  {kind:<32} kept {b}/{a}")
         if stats["dropped_at_write"]:
             print("  dropped at write:", stats["dropped_at_write"])
         (out / "stats.json").write_text(json.dumps(stats, indent=1))
 
-    print(f"this run: {gd.USAGE['calls']} calls, {gd.USAGE['in']:,} in / {gd.USAGE['out']:,} out "
-          f"tokens, ${gd.USAGE['cost']:.2f} {llm.cost_note(args)}, {time.time() - t0:.0f} s")
+    print(
+        f"this run: {gd.USAGE['calls']} calls, {gd.USAGE['in']:,} in / {gd.USAGE['out']:,} out "
+        f"tokens, ${gd.USAGE['cost']:.2f} {llm.cost_note(args)}, {time.time() - t0:.0f} s"
+    )
 
 
 if __name__ == "__main__":

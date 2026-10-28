@@ -39,7 +39,11 @@ agentic workflows built with the [Strands Agents SDK](https://github.com/strands
   about 95% of the time ([evaluation/results.md](evaluation/results.md#summary)); below that,
   confirm or ask a person. Frontier LLM inference APIs do not expose anything equivalent.
 
-## Getting Started
+## How to start using strands-decider
+
+Start on your own machine: install the `strands-decider` CLI, ask the model questions, then run it
+as a server and send it HTTP requests. When other people or services need to call it, deploy that
+server ([Deploying it](#deploying-it)).
 
 The easiest place to get started is through the `strands-decider` cli:
 
@@ -187,6 +191,12 @@ POPE, and is more confident than v19 when the image is missing. v1 has v21's ima
 with the image missing it is more overconfident than v21 on POPE
 ([docs/vision.md](docs/vision.md#v1)). See
 [docs/vision.md](docs/vision.md) for the request shape, how it works and the measurements.
+
+### Deploying it
+
+The server you ran above is what you deploy. To host it beyond your machine, see
+[deploy/README.md](deploy/README.md): it lists where the server can run and links to a guide for
+each.
 
 ## Model names
 
@@ -369,6 +379,21 @@ The repository includes a worked example of strands decider inside a Strands age
 [`examples/strands/`](examples/strands/README.md): a `before_tool_call` intervention that gates a
 weather-tool call on two yes/no decisions, so the agent asks which city instead of guessing. See
 the example's [README](examples/strands/README.md) for setup and the walk-through.
+
+## Customizing for your decisions
+
+[`skills/customize-decider/`](skills/customize-decider/SKILL.md) is a skill for an AI agent.
+It guides you from a decision in your application to a model measured on your own data: the task
+and its questions, an evaluation set, scores of every released model, the decision whether to
+train, the training data, the run and its monitoring, calibration, and the comparison with the
+released model.
+
+The skill is plain Markdown: a `SKILL.md` with a short front matter, and reference files that it
+loads one phase at a time. It works with any agent that can read files and run shell commands, such
+as an agent built with the [Strands Agents SDK](https://github.com/strands-agents/sdk-python) or
+a coding CLI. If your agent supports skills, install the folder where it looks for skills. If not,
+tell the agent to read `skills/customize-decider/SKILL.md` and follow it. Then ask it to evaluate
+Strands Decider on your task.
 
 ## Training
 

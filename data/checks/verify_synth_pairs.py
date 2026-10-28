@@ -7,6 +7,7 @@ halves of a pair differ in only a few lines and have different answers.
 
     python -m data.checks.verify_synth_pairs [n_pairs] [train|heldout]
 """
+
 import difflib
 import re
 import sys
@@ -30,7 +31,7 @@ def _section(doc: str, head_re: str) -> list:
     for i, ln in enumerate(lines):
         if re.match(head_re, ln):
             out = []
-            for x in lines[i + 1:]:
+            for x in lines[i + 1 :]:
                 if not x.strip():
                     break
                 out.append(x)
@@ -44,7 +45,7 @@ def check_xref(it):
     C, G, A = s["category"].upper(), s["condition"].upper(), s["assignee"].upper()
     E = s["entity"]
 
-    table = _section(doc, rf"^{re.escape(C)} TABLE$")[1:]          # skip the prose line
+    table = _section(doc, rf"^{re.escape(C)} TABLE$")[1:]  # skip the prose line
     table = [r for r in table if not re.match(r"^\s*\|?\s*-{3}", r)]
     ent_cat = {}
     for r in table:
@@ -53,8 +54,11 @@ def check_xref(it):
             ent_cat[c[0]] = c[1]
 
     over_block = _section(doc, r"^OVERRIDE$")
-    ocat = re.search(r"follow (.+?), whatever|handled as (.+?), whatever|routed to the (.+?) team"
-                     r"|allocated to the (.+?), whatever", over_block[0])
+    ocat = re.search(
+        r"follow (.+?), whatever|handled as (.+?), whatever|routed to the (.+?) team"
+        r"|allocated to the (.+?), whatever",
+        over_block[0],
+    )
     ocat = next(g for g in ocat.groups() if g)
     overridden = {ln.strip()[2:] for ln in over_block if ln.strip().startswith("- ")}
 
@@ -73,11 +77,15 @@ def check_xref(it):
             assign[(c[0], g)] = name
 
     rec = _section(doc, rf"^{re.escape(s['record'])}$")
-    ent = next(ln.split(":", 1)[1].strip() for ln in rec
-               if ln.strip().lower().startswith(E.lower()))
-    val = next(ln.split(":", 1)[1].strip() for ln in rec
-               if ln.strip().lower().startswith(s["condition"].split()[0].lower())
-               and "note" not in ln.lower())
+    ent = next(
+        ln.split(":", 1)[1].strip() for ln in rec if ln.strip().lower().startswith(E.lower())
+    )
+    val = next(
+        ln.split(":", 1)[1].strip()
+        for ln in rec
+        if ln.strip().lower().startswith(s["condition"].split()[0].lower())
+        and "note" not in ln.lower()
+    )
 
     cat = ocat if ent in overridden else ent_cat[ent]
     want = assign[(cat, groups[val])]
@@ -147,7 +155,7 @@ for it in items:
     count[it.task] += 1
     try:
         ok, why = fn(it)
-    except Exception as exc:          # a parse failure is a defect too
+    except Exception as exc:  # a parse failure is a defect too
         ok, why = False, f"{type(exc).__name__}: {exc}"
     if not ok:
         bad[it.task].append((it, why))
@@ -161,18 +169,27 @@ for p in pairs.values():
     a, b = p
     if a.options[a.label][0] == b.options[b.label][0]:
         same_label += 1
-    d = [x for x in difflib.unified_diff(a.state.split("\n"), b.state.split("\n"), n=0)
-         if x.startswith(("+", "-")) and not x.startswith(("+++", "---"))]
+    d = [
+        x
+        for x in difflib.unified_diff(a.state.split("\n"), b.state.split("\n"), n=0)
+        if x.startswith(("+", "-")) and not x.startswith(("+++", "---"))
+    ]
     diffs.append(len(d))
 
 print(f"split={split}: re-derived {len(items)} items ({len(pairs)} pairs)\n")
 for t in sorted(count):
-    print(f"  {t:<14}{count[t]:>6} checked   {len(bad[t]):>4} disagree "
-          f"({len(bad[t]) / count[t] * 100:5.1f}%)")
+    print(
+        f"  {t:<14}{count[t]:>6} checked   {len(bad[t]):>4} disagree "
+        f"({len(bad[t]) / count[t] * 100:5.1f}%)"
+    )
 print(f"\n  pairs whose halves share an answer : {same_label}")
-print(f"  changed lines per pair             : min {min(diffs)}  max {max(diffs)}  "
-      f"mean {sum(diffs) / len(diffs):.1f}")
+print(
+    f"  changed lines per pair             : min {min(diffs)}  max {max(diffs)}  "
+    f"mean {sum(diffs) / len(diffs):.1f}"
+)
 for t, lst in [(t, x) for t, x in bad.items() if x]:
     it, why = lst[0]
-    print(f"\n--- first {t} disagreement: {why}\n    label {it.options[it.label][0]!r}  meta {it.meta}")
+    print(
+        f"\n--- first {t} disagreement: {why}\n    label {it.options[it.label][0]!r}  meta {it.meta}"
+    )
     print("    " + it.state[:900].replace("\n", "\n    "))

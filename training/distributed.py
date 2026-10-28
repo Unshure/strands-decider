@@ -24,6 +24,7 @@ micro-batches finer and gives short ones whole to single ranks.
 
 At world size 1 none of this runs, and train.py is the original single-process loop.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -47,8 +48,11 @@ FORWARD_OVERHEAD = 6000
 
 def env() -> tuple[int, int, int]:
     """(rank, local_rank, world_size) from torchrun's environment; (0, 0, 1) otherwise."""
-    return (int(os.environ.get("RANK", "0")), int(os.environ.get("LOCAL_RANK", "0")),
-            int(os.environ.get("WORLD_SIZE", "1")))
+    return (
+        int(os.environ.get("RANK", "0")),
+        int(os.environ.get("LOCAL_RANK", "0")),
+        int(os.environ.get("WORLD_SIZE", "1")),
+    )
 
 
 def entry_point(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -71,8 +75,9 @@ def entry_point(fn: Callable[..., Any]) -> Callable[..., Any]:
             torch.cuda.set_device(local_rank)
         # The timeout is a backstop: under torchrun a rank that raises exits, and the
         # launcher then stops the others rather than leaving them in a collective.
-        dist.init_process_group("nccl" if torch.cuda.is_available() else "gloo",
-                                timeout=timedelta(minutes=30))
+        dist.init_process_group(
+            "nccl" if torch.cuda.is_available() else "gloo", timeout=timedelta(minutes=30)
+        )
         try:
             with contextlib.ExitStack() as stack:
                 if rank:
@@ -151,8 +156,9 @@ def _best_cuts(lens: list[int], k: int) -> tuple[int, list[tuple[int, int]]]:
     return best[0, k]
 
 
-def plan_step(batches: list[list[int]], lengths: list[int],
-              world: int) -> list[list[tuple[int, int, int]]]:
+def plan_step(
+    batches: list[list[int]], lengths: list[int], world: int
+) -> list[list[tuple[int, int, int]]]:
     """Each rank's slices (micro-batch j of the step, row start, row stop) for one step.
 
     Every rank gets at least one slice and no forward exceeds a micro-batch, so no rank
@@ -184,7 +190,7 @@ def plan_step(batches: list[list[int]], lengths: list[int],
     # rank's load most, up to a fixed budget of 2 * world extra slices, and keep the
     # best plan seen on the way.
     for _ in range(min(sum(map(len, per)), len(batches) + 2 * world) - len(batches)):
-        cands = [[*n[:j], n[j] + 1, *n[j + 1:]] for j in range(len(n)) if n[j] < len(per[j])]
+        cands = [[*n[:j], n[j] + 1, *n[j + 1 :]] for j in range(len(n)) if n[j] < len(per[j])]
         if not cands:
             break
         (score, plan), n = min(((assign(c), c) for c in cands), key=lambda t: (t[0][0], t[1]))
@@ -246,16 +252,23 @@ class StepSlices:
         self.windows = 0  # steps (windows of grad_accum micro-batches) handed out so far
 
         n_teacher = sum(getattr(ex, "teacher", None) is not None for ex in self.examples)
-        facts = [len(self.lengths), sum(self.lengths), n_teacher, total_steps,
-                 sum(i * x for i, x in enumerate(self.lengths)) % (2**31 - 1)]
+        facts = [
+            len(self.lengths),
+            sum(self.lengths),
+            n_teacher,
+            total_steps,
+            sum(i * x for i, x in enumerate(self.lengths)) % (2**31 - 1),
+        ]
         lo = torch.tensor(facts, dtype=torch.int64, device=_device())
         hi = lo.clone()
         dist.all_reduce(lo, op=dist.ReduceOp.MIN)
         dist.all_reduce(hi, op=dist.ReduceOp.MAX)
         if not torch.equal(lo, hi):
-            raise RuntimeError(f"ranks hold different training data (rows, total length, "
-                               f"teacher rows, steps, length checksum): min {lo.tolist()}, "
-                               f"max {hi.tolist()}")
+            raise RuntimeError(
+                f"ranks hold different training data (rows, total length, "
+                f"teacher rows, steps, length checksum): min {lo.tolist()}, "
+                f"max {hi.tolist()}"
+            )
 
     def __iter__(self) -> Iterator[dict[str, Any]]:
         order: list[Any] = [None]
@@ -264,8 +277,13 @@ class StepSlices:
             # sampler takes its seed from the global torch RNG), then broadcast. Rank 0's
             # global RNG stays where one GPU's is because rank 0 also runs every
             # validation pass, whose loader draws from it too: keep it that way.
-            order[0] = list(DataLoader(range(len(self.examples)),
-                                       batch_sampler=self.loader.batch_sampler, collate_fn=list))
+            order[0] = list(
+                DataLoader(
+                    range(len(self.examples)),
+                    batch_sampler=self.loader.batch_sampler,
+                    collate_fn=list,
+                )
+            )
         dist.broadcast_object_list(order, src=0)
         for idx in order[0]:
             self.open.append(idx)

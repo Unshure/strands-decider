@@ -1,4 +1,5 @@
 """Multi-step sources: labels must survive windowing, and no shortcut may survive balancing."""
+
 from __future__ import annotations
 
 import json
@@ -14,10 +15,11 @@ RAW = "data/raw"
 
 
 def _nda(tmp_path, text, spans, annotations):
-    doc = {"id": 1, "text": text, "spans": spans,
-           "annotation_sets": [{"annotations": annotations}]}
-    data = {"documents": [doc], "labels": {
-        k: {"short_description": k, "hypothesis": f"Claim {k}."} for k in annotations}}
+    doc = {"id": 1, "text": text, "spans": spans, "annotation_sets": [{"annotations": annotations}]}
+    data = {
+        "documents": [doc],
+        "labels": {k: {"short_description": k, "hypothesis": f"Claim {k}."} for k in annotations},
+    }
     path = tmp_path / "nda.json"
     path.write_text(json.dumps(data), encoding="utf-8")
     return str(path)
@@ -31,8 +33,15 @@ def test_contractnli_window_keeps_every_evidence_span(tmp_path):
         spans.append([pos, pos + len(s)])
         pos += len(s)
     evidence = [300, 305]  # deep in a document far longer than the budget
-    path = _nda(tmp_path, text, spans, {"nda-1": {"choice": "Entailment", "spans": evidence},
-                                        "nda-2": {"choice": "NotMentioned", "spans": []}})
+    path = _nda(
+        tmp_path,
+        text,
+        spans,
+        {
+            "nda-1": {"choice": "Entailment", "spans": evidence},
+            "nda-2": {"choice": "NotMentioned", "spans": []},
+        },
+    )
     rows = list(ms.contractnli(path, budget=2000))
     assert len(text) > 2000
     by = {r.label: r for r in rows}
@@ -53,8 +62,16 @@ def test_balance_by_claim_removes_the_claim_only_shortcut():
     exs = []
     for claim, counts in {"A": (300, 40, 3), "B": (30, 200, 60), "C": (500, 0, 0)}.items():
         for label, n in enumerate(counts):
-            exs += [Example(kind="choice", state=f"{claim}{i}", instructions=claim,
-                            options=ms.NLI_OPTIONS, label=label) for i in range(n)]
+            exs += [
+                Example(
+                    kind="choice",
+                    state=f"{claim}{i}",
+                    instructions=claim,
+                    options=ms.NLI_OPTIONS,
+                    label=label,
+                )
+                for i in range(n)
+            ]
     out = ms.balance_by_claim(exs, min_count=25)
     per = Counter((e.instructions, e.label) for e in out)
     assert per[("A", 0)] == per[("A", 1)] == 40 and per[("A", 2)] == 0  # 3 is below min_count
@@ -68,11 +85,24 @@ def test_balance_by_claim_removes_the_claim_only_shortcut():
 
 def test_musique_pairs_keep_both_versions_and_label_cannot():
     def row(qid, answerable):
-        paras = [{"idx": i, "title": f"T{qid}{i}", "paragraph_text": "text " * 20,
-                  "is_supporting": answerable and i < 2} for i in range(6)]
-        return {"id": qid, "question": f"Q{qid}?", "answer": "Paris", "answerable": answerable,
-                "paragraphs": paras,
-                "question_decomposition": [{"answer": "France"}, {"answer": "Paris"}]}
+        paras = [
+            {
+                "idx": i,
+                "title": f"T{qid}{i}",
+                "paragraph_text": "text " * 20,
+                "is_supporting": answerable and i < 2,
+            }
+            for i in range(6)
+        ]
+        return {
+            "id": qid,
+            "question": f"Q{qid}?",
+            "answer": "Paris",
+            "answerable": answerable,
+            "paragraphs": paras,
+            "question_decomposition": [{"answer": "France"}, {"answer": "Paris"}],
+        }
+
     rows = [row(q, a) for q in ("x", "y", "z") for a in (True, False)]
     picked = ms.musique_pairs(rows, 2)
     assert Counter(r["id"] for r in picked) == {k: 2 for k in {r["id"] for r in picked}}
@@ -84,9 +114,14 @@ def test_musique_pairs_keep_both_versions_and_label_cannot():
 
 def test_hotpotqa_uses_only_exact_answers():
     def row(ans, titles):
-        return {"type": "comparison", "question": "Which is older?", "answer": ans,
-                "supporting_facts": {"title": titles, "sent_id": [0, 0]},
-                "context": {"title": [*titles, "D"], "sentences": [["s."], ["t."], ["u."]]}}
+        return {
+            "type": "comparison",
+            "question": "Which is older?",
+            "answer": ans,
+            "supporting_facts": {"title": titles, "sent_id": [0, 0]},
+            "context": {"title": [*titles, "D"], "sentences": [["s."], ["t."], ["u."]]},
+        }
+
     yes, pick, vague = (list(ms.hotpotqa([row(a, ["A", "B"])])) for a in ("yes", "B", "1901"))
     assert yes[0].kind == "noul" and yes[0].label == 1
     assert pick[0].options[pick[0].label][0] == "B"
@@ -94,8 +129,10 @@ def test_hotpotqa_uses_only_exact_answers():
 
 
 def test_boardgame_splits_off_the_question():
-    r = {"example": "Facts here. Rule1: x. " + ms.BOARDGAME_Q + "does the cat win?",
-         "label": "unknown"}
+    r = {
+        "example": "Facts here. Rule1: x. " + ms.BOARDGAME_Q + "does the cat win?",
+        "label": "unknown",
+    }
     (ex,) = ms.boardgame([r])
     assert ex.instructions.startswith(ms.BOARDGAME_Q) and ms.BOARDGAME_Q not in ex.state
     assert ex.options[ex.label][0] == "unknown"

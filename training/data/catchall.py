@@ -20,6 +20,7 @@ trained on (`massive_intent`, `emotion` in data/holdout_v5_norule.jsonl).
 
     python -m training.data.catchall --out data/catchall_v20.jsonl --eval-out data/catchall_v20_eval.jsonl
 """
+
 from __future__ import annotations
 
 import random
@@ -34,8 +35,10 @@ DESCRIPTION = "the text fits none of the other options"
 
 
 def _oos(ex: Example) -> bool:
-    return any("oos" in n.lower() or "out of scope" in n.lower() or "out_of_scope" in n.lower()
-               for n, _ in ex.options)
+    return any(
+        "oos" in n.lower() or "out of scope" in n.lower() or "out_of_scope" in n.lower()
+        for n, _ in ex.options
+    )
 
 
 def transform(ex: Example, mode: str, rng: random.Random, max_options: int = 24) -> Example | None:
@@ -59,12 +62,21 @@ def transform(ex: Example, mode: str, rng: random.Random, max_options: int = 24)
         options = [*options, catch]
     else:
         raise ValueError(mode)
-    return Example(kind="choice", state=ex.state, instructions=ex.instructions,
-                   options=[list(o) for o in options], label=label, task=f"{ex.task}+catchall:{mode}",
-                   weight=ex.weight, instruction_variants=list(ex.instruction_variants))
+    return Example(
+        kind="choice",
+        state=ex.state,
+        instructions=ex.instructions,
+        options=[list(o) for o in options],
+        label=label,
+        task=f"{ex.task}+catchall:{mode}",
+        weight=ex.weight,
+        instruction_variants=list(ex.instruction_variants),
+    )
 
 
-def build(examples: list[Example], tasks: Iterable[str], per_task: int, seed: int = 0) -> list[Example]:
+def build(
+    examples: list[Example], tasks: Iterable[str], per_task: int, seed: int = 0
+) -> list[Example]:
     """`per_task` rows from each task, half absent and half present."""
     rng = random.Random(seed)
     out: list[Example] = []
@@ -73,7 +85,9 @@ def build(examples: list[Example], tasks: Iterable[str], per_task: int, seed: in
         rng.shuffle(pool)
         want = {"absent": per_task // 2, "present": per_task - per_task // 2}
         for e in pool:
-            mode = "absent" if want["absent"] >= want["present"] and want["absent"] > 0 else "present"
+            mode = (
+                "absent" if want["absent"] >= want["present"] and want["absent"] > 0 else "present"
+            )
             if want[mode] == 0:
                 break
             row = transform(e, mode, rng)
@@ -105,7 +119,9 @@ def main(argv: list[str] | None = None) -> None:
     evals = build(test_half, HELDOUT, args.eval_per_task, seed=args.seed)
     for name, rows in (("train", train), ("eval", evals)):
         absent = sum(r.task.endswith(":absent") for r in rows)
-        print(f"{name}: {len(rows):,} rows ({absent:,} catch-all right, {len(rows) - absent:,} catch-all a distractor)")
+        print(
+            f"{name}: {len(rows):,} rows ({absent:,} catch-all right, {len(rows) - absent:,} catch-all a distractor)"
+        )
     write_jsonl(args.out, train)
     write_jsonl(args.eval_out, evals)
 

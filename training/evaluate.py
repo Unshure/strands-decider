@@ -40,6 +40,7 @@ from rich.console import Console
 from rich.table import Table
 from torch.utils.data import DataLoader
 
+from strands_decider.infer import EngineConfig, SystemOneEngine
 from strands_decider.modeling import (
     MASK_VALUE,
     StrandsDeciderModel,
@@ -71,7 +72,8 @@ def partition_examples(examples: list[Example], part: str, *, seed: int = 0) -> 
         raise ValueError(f"split must be one of calib|test|all, got {part!r}")
     want = 0 if part == "calib" else 1
     return [
-        ex for i, ex in enumerate(examples)
+        ex
+        for i, ex in enumerate(examples)
         if (hashlib.sha256(f"{seed}:{i}".encode()).digest()[0] & 1) == want
     ]
 
@@ -112,9 +114,7 @@ class Prediction:
     def confidence(self) -> float:
         """Must match what the server reports, or ECE measures the wrong thing."""
         if self.kind == "score":
-            return derive_score_confidence(
-                self.probs, ordinal_smoothing=self.ordinal_smoothing
-            )
+            return derive_score_confidence(self.probs, ordinal_smoothing=self.ordinal_smoothing)
         return derive_confidence(self.probs)
 
 
@@ -132,14 +132,12 @@ def collect_logits(
     The logits are untempered. In each row, the columns at or past the row's option
     count hold MASK_VALUE, so a raw argmax over the row lands on one of its options.
     """
-    model.eval().to(device)
+    # Prepare the model as serving does on this device (MPS/CPU kernels, fp32 torso on CPU),
+    # so `eval` and `calibrate` measure the numbers `serve` returns.
+    model = SystemOneEngine(model, EngineConfig(device=device)).model
     coll = SystemOneCollator(
         model.tokenizer,
-        CollatorConfig(
-            max_length=max_length,
-            num_slots=model.config.num_slots,
-            head_type=model.config.head_type,
-        ),
+        CollatorConfig(max_length=max_length),
         train=False,  # no option shuffling: evaluation must be deterministic
     )
     loader = DataLoader(
@@ -172,8 +170,7 @@ def collect_logits(
     # MASK_VALUE keeps the extra columns inert under masked_log_softmax.
     width = max(t.size(1) for t in all_logits)
     all_logits = [
-        t if t.size(1) == width
-        else F.pad(t, (0, width - t.size(1)), value=MASK_VALUE)
+        t if t.size(1) == width else F.pad(t, (0, width - t.size(1)), value=MASK_VALUE)
         for t in all_logits
     ]
     return (
@@ -242,7 +239,9 @@ def fit_temperature_by_kind(
         sel = torch.tensor(idx, dtype=torch.long)
         out[kind] = float(
             fit_temperature(
-                logits[sel], labels[sel], n_slots[sel],
+                logits[sel],
+                labels[sel],
+                n_slots[sel],
                 objective=objective,
                 examples=[examples[i] for i in idx],
                 ordinal_smoothing=ordinal_smoothing,
@@ -369,12 +368,14 @@ def fit_temperature(
         if examples is None:
             raise ValueError("fitting to ECE needs the examples, to pick per-kind confidence")
         grid = [lo * (hi / lo) ** (i / (iters - 1)) for i in range(iters)]
-        return float(min(
-            grid,
-            key=lambda t: ece_at_temperature(
-                logits, labels, n_slots, examples, t, ordinal_smoothing
-            ),
-        ))
+        return float(
+            min(
+                grid,
+                key=lambda t: ece_at_temperature(
+                    logits, labels, n_slots, examples, t, ordinal_smoothing
+                ),
+            )
+        )
     if objective != "nll":
         raise ValueError(f"objective must be 'nll' or 'ece', got {objective!r}")
 
@@ -408,7 +409,10 @@ def evaluate_checkpoint(
 ) -> dict[str, Any]:
     model = StrandsDeciderModel.load(checkpoint)
     logits, labels, slots, exs = collect_logits(
-        model, examples, device=device, batch_size=batch_size,
+        model,
+        examples,
+        device=device,
+        batch_size=batch_size,
         max_length=model.config.max_length,
     )
     if apply_temperature:
@@ -417,8 +421,12 @@ def evaluate_checkpoint(
     else:
         t = 1.0
     preds = predictions_from_logits(
-        logits, labels, slots, exs,
-        temperature=t, ordinal_smoothing=model.config.ordinal_smoothing,
+        logits,
+        labels,
+        slots,
+        exs,
+        temperature=t,
+        ordinal_smoothing=model.config.ordinal_smoothing,
     )
     result = summarise(preds)
     result["temperature"] = t
@@ -444,7 +452,10 @@ def calibrate_checkpoint(
         )
     model = StrandsDeciderModel.load(checkpoint)
     logits, labels, slots, exs = collect_logits(
-        model, examples, device=device, batch_size=batch_size,
+        model,
+        examples,
+        device=device,
+        batch_size=batch_size,
         max_length=model.config.max_length,
     )
 
@@ -486,6 +497,14 @@ def _fmt_temperature(t: float | dict[str, float]) -> str:
     return f"{t:.3f}"
 
 
+def _device(device: str | None) -> str:
+    from strands_decider.cli import resolve_device
+
+    if device == "mlx":  # the MLX backend serves only; it has no logits path for evaluation
+        raise typer.BadParameter("--device mlx is for serving; evaluate on cuda, mps or cpu")
+    return resolve_device(device)
+
+
 @app.command("eval")
 def eval_cmd(
     checkpoint: str = typer.Argument(...),
@@ -499,7 +518,8 @@ def eval_cmd(
         help="Half of --data to score: test|calib|all. Disjoint from `calibrate`.",
     ),
     device: str | None = typer.Option(
-        None, "--device",
+        None,
+        "--device",
         help="cuda, mps or cpu (torch). Auto-detected when omitted: cuda > mps > cpu.",
     ),
 ) -> None:
@@ -507,12 +527,13 @@ def eval_cmd(
 
     Defaults to the `test` half, which `python -m training.evaluate calibrate` does not fit on.
     """
-    from strands_decider.cli import resolve_device
-
     examples = sample_examples(partition_examples(list(read_jsonl(data)), split), limit)
     report = evaluate_checkpoint(
-        checkpoint, examples, batch_size=batch_size, apply_temperature=not raw,
-        device=resolve_device(device),
+        checkpoint,
+        examples,
+        batch_size=batch_size,
+        apply_temperature=not raw,
+        device=_device(device),
     )
     overall = report["overall"]
     console.print(
@@ -554,7 +575,8 @@ def calibrate_cmd(
         help="Half of --data to use: calib|test|all. Disjoint from `eval --split test`.",
     ),
     device: str | None = typer.Option(
-        None, "--device",
+        None,
+        "--device",
         help="cuda, mps or cpu (torch). Auto-detected when omitted: cuda > mps > cpu.",
     ),
 ) -> None:
@@ -566,11 +588,12 @@ def calibrate_cmd(
     Defaults to the `calib` half so that `python -m training.evaluate eval --split test`
     scores rows the temperature was never fitted on.
     """
-    from strands_decider.cli import resolve_device
-
     examples = sample_examples(partition_examples(list(read_jsonl(data)), split), limit)
     result = calibrate_checkpoint(
-        checkpoint, examples, batch_size=batch_size, device=resolve_device(device),
+        checkpoint,
+        examples,
+        batch_size=batch_size,
+        device=_device(device),
     )
     console.print(f"[green]global temperature = {result['temperature']:.4f}[/]")
     by_kind = result.get("temperature_by_kind") or {}

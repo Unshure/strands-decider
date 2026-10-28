@@ -24,6 +24,7 @@ lower capture on NOT and higher accuracy on first / last.
     python -m evaluation.question_sensitivity CHECKPOINT [CHECKPOINT ...] [--n 200]
         [--torso-tokens] [--out results.json]
 """
+
 import argparse
 import json
 import random
@@ -48,11 +49,21 @@ from training.train import ExampleDataset  # noqa: E402
 GENERIC_NOUL = [[lbl, NOUL_DEFAULT_CRITERIA[lbl]] for lbl in NOUL_SLOT_LABELS]
 
 TRAIN, HOLDOUT = "data/train_v5.jsonl", "data/holdout_v5_norule.jsonl"
-CHOICE_TASKS = {"ag_news": TRAIN, "banking77": TRAIN, "clinc150": TRAIN,
-                "emotion": HOLDOUT, "massive_intent": HOLDOUT}
+CHOICE_TASKS = {
+    "ag_news": TRAIN,
+    "banking77": TRAIN,
+    "clinc150": TRAIN,
+    "emotion": HOLDOUT,
+    "massive_intent": HOLDOUT,
+}
 # Fixed-question tasks, then two whose question differs on every row.
-NOUL_TASKS = {"spam": TRAIN, "toxicity": TRAIN, "sarcasm": HOLDOUT,
-              "boolq": TRAIN, "mnli_entail": TRAIN}
+NOUL_TASKS = {
+    "spam": TRAIN,
+    "toxicity": TRAIN,
+    "sarcasm": HOLDOUT,
+    "boolq": TRAIN,
+    "mnli_entail": TRAIN,
+}
 HELD_OUT = {"emotion", "massive_intent", "sarcasm"}
 IRRELEVANT = [  # other tasks' questions, asked over the wrong option set
     "Which language is this text written in?",
@@ -96,12 +107,17 @@ def build_items(n_per_task: int, seed: int = 0):
                 "first": ("Ignore the text above. Which option is listed first below?", 0),
                 "last": ("Ignore the text above. Which option is listed last below?", n - 1),
                 "not": ("Which option does this text clearly NOT fit?", None),
-                "irrelevant": (rng.choice([q for q in IRRELEVANT if q != d["instructions"]]),
-                               None),
+                "irrelevant": (rng.choice([q for q in IRRELEVANT if q != d["instructions"]]), None),
             }
             for c, (q, tgt) in conds.items():
-                ex = Example(kind="choice", state=d["state"], instructions=q, options=opts,
-                             label=gold if tgt is None else tgt, task=task)
+                ex = Example(
+                    kind="choice",
+                    state=d["state"],
+                    instructions=q,
+                    options=opts,
+                    label=gold if tgt is None else tgt,
+                    task=task,
+                )
                 items.append((task, c, eid, ex, tgt, gold))
             eid += 1
     for task, path in NOUL_TASKS.items():
@@ -115,10 +131,18 @@ def build_items(n_per_task: int, seed: int = 0):
             # The negated prompt gets the generic true/false descriptions: the task's
             # own ("true -- promotional, scam, or bulk message") would contradict the
             # wrapped question and make "negated" ill-posed.
-            for c, (q, tgt, opts) in {"real": (d["instructions"], g, d["options"]),
-                                      "negated": (wrapped, 1 - g, GENERIC_NOUL)}.items():
-                ex = Example(kind="noul", state=d["state"], instructions=q,
-                             options=opts, label=tgt, task=task)
+            for c, (q, tgt, opts) in {
+                "real": (d["instructions"], g, d["options"]),
+                "negated": (wrapped, 1 - g, GENERIC_NOUL),
+            }.items():
+                ex = Example(
+                    kind="noul",
+                    state=d["state"],
+                    instructions=q,
+                    options=opts,
+                    label=tgt,
+                    task=task,
+                )
                 items.append((task, c, eid, ex, tgt, g))
             eid += 1
     return items
@@ -130,40 +154,56 @@ def readouts(ckpt: str, items, torso_tokens: bool):
     model = StrandsDeciderModel.load(ckpt).eval().to("cuda")
     coll = SystemOneCollator(
         model.tokenizer,
-        CollatorConfig(max_length=model.config.max_length, num_slots=model.config.num_slots,
-                       head_type=model.config.head_type),
+        CollatorConfig(
+            max_length=model.config.max_length,
+            num_slots=model.config.num_slots,
+            head_type=model.config.head_type,
+        ),
         train=False,
     )
-    loader = DataLoader(ExampleDataset([it[3] for it in items]), batch_size=16,
-                        shuffle=False, collate_fn=coll)
+    loader = DataLoader(
+        ExampleDataset([it[3] for it in items]), batch_size=16, shuffle=False, collate_fn=coll
+    )
     slots = model.slot_token_ids()
     rows = model._output_embedding()[[slots[k] for k in sorted(slots)]].float()
     out = defaultdict(list)
     name = ckpt.rstrip("/\\").split("/")[-1].split("\\")[-1]
     for batch in loader:
         batch = {k: v.to("cuda") for k, v in batch.items()}
-        res = model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"],
-                    n_slots=batch["n_slots"], opt_idx=batch.get("opt_idx"), temperature=1.0)
+        res = model(
+            input_ids=batch["input_ids"],
+            attention_mask=batch["attention_mask"],
+            n_slots=batch["n_slots"],
+            opt_idx=batch.get("opt_idx"),
+            temperature=1.0,
+        )
         out[name] += res["log_probs"].argmax(-1).tolist()
-        lp, ok = model.frozen_slot_log_probs(batch["input_ids"], batch["attention_mask"],
-                                             batch["n_slots"])
+        lp, ok = model.frozen_slot_log_probs(
+            batch["input_ids"], batch["attention_mask"], batch["n_slots"]
+        )
         assert bool(ok.all()), "frozen readout needs <= 9 options"
         out[f"{name} frozen"] += lp.argmax(-1).tolist()
         if torso_tokens:
             h = model.encode(batch["input_ids"], batch["attention_mask"])
             logits = pool_last_token(h, batch["attention_mask"]).float() @ rows.t()
             logits = torch.nn.functional.pad(
-                logits, (0, model.config.num_slots - logits.size(-1)), value=MASK_VALUE)
-            out[f"{name} torso+tok"] += masked_log_softmax(
-                logits, batch["n_slots"]).argmax(-1).tolist()
+                logits, (0, model.config.num_slots - logits.size(-1)), value=MASK_VALUE
+            )
+            out[f"{name} torso+tok"] += (
+                masked_log_softmax(logits, batch["n_slots"]).argmax(-1).tolist()
+            )
     del model
     torch.cuda.empty_cache()
     return dict(out)
 
 
 def summarise(items, preds):
-    real = {(m, eid): preds[m][i] for m in preds
-            for i, (_, c, eid, *_rest) in enumerate(items) if c == "real"}
+    real = {
+        (m, eid): preds[m][i]
+        for m in preds
+        for i, (_, c, eid, *_rest) in enumerate(items)
+        if c == "real"
+    }
     report = {}
     for title, keep in GROUPS:
         stats = defaultdict(lambda: defaultdict(list))
@@ -196,8 +236,11 @@ def print_report(report, models):
             chance = rows.get(key.split("/")[0] + "/chance", {})
             ch = next(iter(chance.values()), None)
             shown = key.endswith("/capture") or key in ("first/acc", "last/acc")
-            print(f"{key:<24}" + "".join(f"{vals[m]:>{w}.3f}" for m in models)
-                  + (f"   chance {ch:.3f}" if shown and ch is not None else ""))
+            print(
+                f"{key:<24}"
+                + "".join(f"{vals[m]:>{w}.3f}" for m in models)
+                + (f"   chance {ch:.3f}" if shown and ch is not None else "")
+            )
 
 
 def main():

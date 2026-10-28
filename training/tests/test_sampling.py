@@ -12,8 +12,10 @@ from training.data.sampling import LengthGroupedBatchSampler, padding_fraction
 def _mixed_lengths(n: int = 4000, long_share: float = 0.09, seed: int = 0):
     """A short-heavy corpus with a minority of long documents, like v10's."""
     rng = random.Random(seed)
-    return [rng.randint(1800, 2600) if rng.random() < long_share else rng.randint(150, 400)
-            for _ in range(n)]
+    return [
+        rng.randint(1800, 2600) if rng.random() < long_share else rng.randint(150, 400)
+        for _ in range(n)
+    ]
 
 
 def test_every_index_appears_once_per_epoch():
@@ -24,12 +26,12 @@ def test_every_index_appears_once_per_epoch():
 
 
 def test_drop_last_gives_full_batches_and_matches_len():
-    lengths = _mixed_lengths(n=4003)                 # not a multiple of 8
+    lengths = _mixed_lengths(n=4003)  # not a multiple of 8
     s = LengthGroupedBatchSampler(lengths, 8, drop_last=True)
     batches = s.batches(0)
     assert all(len(b) == 8 for b in batches)
     assert len(batches) == len(s) == 4003 // 8
-    assert len({i for b in batches for i in b}) == 8 * len(batches)   # no repeats
+    assert len({i for b in batches for i in b}) == 8 * len(batches)  # no repeats
 
 
 def test_deterministic_per_epoch_and_different_across_epochs():
@@ -48,7 +50,7 @@ def test_grouping_cuts_padding_substantially():
     grouped = LengthGroupedBatchSampler(lengths, 8).batches(0)
     order = list(range(len(lengths)))
     random.Random(0).shuffle(order)
-    ungrouped = [order[i:i + 8] for i in range(0, len(order) - len(order) % 8, 8)]
+    ungrouped = [order[i : i + 8] for i in range(0, len(order) - len(order) % 8, 8)]
     g, u = padding_fraction(lengths, grouped), padding_fraction(lengths, ungrouped)
     assert g < u / 3, (g, u)
 
@@ -75,8 +77,9 @@ def test_long_documents_stay_spread_across_the_epoch():
     assert span > 0.8, span
     # and no single stretch holds most of them
     quarter = len(batches) // 4
-    per_quarter = [sum(1 for k in long_at if q * quarter <= k < (q + 1) * quarter)
-                   for q in range(4)]
+    per_quarter = [
+        sum(1 for k in long_at if q * quarter <= k < (q + 1) * quarter) for q in range(4)
+    ]
     assert max(per_quarter) < 0.5 * len(long_at), per_quarter
 
 

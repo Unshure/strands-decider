@@ -1,7 +1,8 @@
-"""kl_frozen_reference: a trained checkpoint's own distribution as the frozen-KL reference.
+"""kl_frozen_reference: a trained checkpoint's own distribution as the frozen-KL anchor.
 
 CPU only, with test_ddp.py's tiny Qwen3 torso and test-trained tokenizer.
 """
+
 from __future__ import annotations
 
 import json
@@ -30,10 +31,21 @@ def corpus(tmp_path_factory):
     return d
 
 
-def _train(corpus, out, monkeypatch, **over):
-    """2 optimizer steps of train(); the gradient of each step, where train.py clips it."""
+def _tiny(corpus, tokenizer="tokenizer.json"):
+    cfg = T.StrandsDeciderConfig(base_model="tiny", pointer_dim=16)
+    return _tiny_model_factory(str(corpus / tokenizer))(cfg)
+
+
+def _train(corpus, out, monkeypatch, *, ref_model=None, **over):
+    """2 optimizer steps of train(); the gradient of each step, where train.py clips it.
+
+    `ref_model` is monkey-patched into `StrandsDeciderModel.load` so the frozen-KL anchor
+    has a reference to load. Pass None to test paths that error out before the load.
+    """
     factory = _tiny_model_factory(str(corpus / "tokenizer.json"))
     monkeypatch.setattr(StrandsDeciderModel, "from_pretrained_base", staticmethod(factory))
+    if ref_model is not None:
+        monkeypatch.setattr(StrandsDeciderModel, "load", staticmethod(lambda path, **k: ref_model))
     grads = []
 
     def clip(params, max_norm, *a, **k):
@@ -42,48 +54,76 @@ def _train(corpus, out, monkeypatch, **over):
         return REAL_CLIP(params, max_norm, *a, **k)
 
     monkeypatch.setattr(torch.nn.utils, "clip_grad_norm_", clip)
-    base = dict(train_files=[str(corpus / "a.jsonl")], val_files=[str(corpus / "val.jsonl")],
-                base_model="tiny", head_type="pointer", pointer_dim=16, kl_frozen_weight=0.3,
-                head_dropout=0.0, max_length=2048, micro_batch_size=8, grad_accum=4,
-                max_steps=2, group_by_length=True, length_group_mega=2, log_every=1,
-                eval_every=0, output_dir=str(out))
+    base = dict(
+        train_files=[str(corpus / "a.jsonl")],
+        val_files=[str(corpus / "val.jsonl")],
+        base_model="tiny",
+        pointer_dim=16,
+        kl_frozen_weight=0.3,
+        kl_frozen_reference="ref",
+        head_dropout=0.0,
+        max_length=2048,
+        micro_batch_size=8,
+        grad_accum=4,
+        max_steps=2,
+        group_by_length=True,
+        length_group_mega=2,
+        log_every=1,
+        eval_every=0,
+        output_dir=str(out),
+    )
     T.train(T.TrainConfig(**{**base, **over}))
     with open(out / "history.json", encoding="utf-8") as fh:
         return grads, json.load(fh)
-
-
-def _tiny(corpus, tokenizer="tokenizer.json"):
-    cfg = T.StrandsDeciderConfig(base_model="tiny", head_type="pointer", pointer_dim=16)
-    return _tiny_model_factory(str(corpus / tokenizer))(cfg)
 
 
 def _batches():
     return [list(range(i, i + 8)) for i in range(0, 48, 8)]
 
 
-@pytest.mark.parametrize("over", [dict(), dict(kl_frozen_weight=0.0, precompute_frozen_kl=True)])
+@pytest.mark.parametrize(
+    "over",
+    [
+        dict(),  # kl_frozen_weight=0.3 default, precompute_frozen_kl=False (default)
+        dict(kl_frozen_weight=0.0, precompute_frozen_kl=True),
+    ],
+)
 def test_reference_needs_the_precomputed_pass_and_the_kl_term(corpus, tmp_path, monkeypatch, over):
     with pytest.raises(ValueError, match="kl_frozen_reference"):
         _train(corpus, tmp_path, monkeypatch, kl_frozen_reference=str(tmp_path), **over)
+
+
+def test_weight_without_reference_is_refused(corpus, tmp_path, monkeypatch):
+    """kl_frozen_weight > 0 needs a reference checkpoint: there is no base-torso fallback.
+
+    The slot head could read the untouched torso's option-number distribution; the pointer
+    head scores each option from its own hidden state, so no such base-model-only path
+    exists. Every config/v1 recipe sets `kl_frozen_reference` to the v19 pointer checkpoint.
+    """
+    with pytest.raises(ValueError, match="kl_frozen_reference"):
+        _train(corpus, tmp_path, monkeypatch, kl_frozen_reference=None, precompute_frozen_kl=True)
 
 
 def test_reference_rows_are_the_checkpoint_own_distribution(corpus):
     torch.manual_seed(0)
     student, ref_model = _tiny(corpus), _tiny(corpus).eval()
     rows = load_examples([str(corpus / "a.jsonl")])
-    coll_cfg = CollatorConfig(max_length=2048, head_type="pointer", seed=0)
+    coll_cfg = CollatorConfig(max_length=2048, seed=0)
     ref = T._frozen_reference(student, rows, _batches(), coll_cfg, "cpu", ref_model)
     coll = SystemOneCollator(student.tokenizer, coll_cfg, train=True)  # the same renders
     for m, idx in enumerate(_batches()):
         b = coll([rows[i] for i in idx])
         with torch.no_grad():
-            lp = ref_model(input_ids=b["input_ids"], attention_mask=b["attention_mask"],
-                           n_slots=b["n_slots"], opt_idx=b["opt_idx"], temperature=1.0)["log_probs"]
+            lp = ref_model(
+                input_ids=b["input_ids"],
+                attention_mask=b["attention_mask"],
+                n_slots=b["n_slots"],
+                opt_idx=b["opt_idx"],
+                temperature=1.0,
+            )["log_probs"]
         for r, n in enumerate(b["n_slots"].tolist()):
             assert torch.equal(ref[m, r, :n], lp[r, :n])
             assert torch.isneginf(ref[m, r, n:]).all()
-    base = T._frozen_reference(student, rows, _batches(), coll_cfg, "cpu")
-    assert not torch.equal(base, ref)
 
 
 def test_reference_with_its_own_tokenizer_sees_the_student_slot_order(corpus):
@@ -95,7 +135,7 @@ def test_reference_with_its_own_tokenizer_sees_the_student_slot_order(corpus):
     rows = load_examples([str(corpus / "a.jsonl")])
     for i, ex in enumerate(rows):  # a teacher distribution makes each slot identifiable
         ex.teacher = [(j + 1) / 100 + i for j in range(ex.n_options)]
-    coll_cfg = CollatorConfig(max_length=2048, head_type="pointer", seed=0)
+    coll_cfg = CollatorConfig(max_length=2048, seed=0)
     ref = T._frozen_reference(student, rows, _batches(), coll_cfg, "cpu", ref_model)
     stu_coll = SystemOneCollator(student.tokenizer, coll_cfg, train=True)  # training's renders
     ref_coll = SystemOneCollator(ref_model.tokenizer, coll_cfg, train=True)
@@ -103,12 +143,18 @@ def test_reference_with_its_own_tokenizer_sees_the_student_slot_order(corpus):
     for m, idx in enumerate(_batches()):
         s, b = stu_coll([rows[i] for i in idx]), ref_coll([rows[i] for i in idx])
         differ += s["input_ids"].shape != b["input_ids"].shape or not torch.equal(
-            s["input_ids"], b["input_ids"])
+            s["input_ids"], b["input_ids"]
+        )
         for k in ("labels", "n_slots", "teacher", "label_dist"):
             assert torch.equal(s[k], b[k]), (m, k)  # the same permutation of every row
         with torch.no_grad():
-            lp = ref_model(input_ids=b["input_ids"], attention_mask=b["attention_mask"],
-                           n_slots=b["n_slots"], opt_idx=b["opt_idx"], temperature=1.0)["log_probs"]
+            lp = ref_model(
+                input_ids=b["input_ids"],
+                attention_mask=b["attention_mask"],
+                n_slots=b["n_slots"],
+                opt_idx=b["opt_idx"],
+                temperature=1.0,
+            )["log_probs"]
         for r, n in enumerate(b["n_slots"].tolist()):
             assert torch.equal(ref[m, r, :n], lp[r, :n])
             assert torch.isneginf(ref[m, r, n:]).all()
@@ -119,18 +165,33 @@ def test_reference_with_its_own_tokenizer_sees_the_student_slot_order(corpus):
 def test_train_with_a_reference(corpus, tmp_path, monkeypatch, tokenizer):
     torch.manual_seed(1)  # seed 0 would build the student's own initial weights: KL 0
     ref_model = _tiny(corpus, tokenizer)
-    monkeypatch.setattr(StrandsDeciderModel, "load", staticmethod(lambda path, **k: ref_model))
-    plain, _ = _train(corpus, tmp_path / "plain", monkeypatch, precompute_frozen_kl=True)
-    grads, history = _train(corpus, tmp_path / "ref", monkeypatch, precompute_frozen_kl=True,
-                            kl_frozen_reference="ref")
+    plain, _ = _train(
+        corpus,
+        tmp_path / "plain",
+        monkeypatch,
+        ref_model=ref_model,
+        kl_frozen_weight=0.0,
+        kl_frozen_reference=None,
+    )
+    grads, history = _train(
+        corpus,
+        tmp_path / "ref",
+        monkeypatch,
+        ref_model=ref_model,
+        precompute_frozen_kl=True,
+    )
     assert all(h["kl"] > 0 for h in history if "kl" in h)
-    assert not all(torch.equal(x, y) for p, q in zip(plain, grads, strict=True)
-                   for x, y in zip(p, q, strict=True))
+    assert not all(
+        torch.equal(x, y)
+        for p, q in zip(plain, grads, strict=True)
+        for x, y in zip(p, q, strict=True)
+    )
 
 
 def _same(a, b):
-    return all(torch.equal(x, y) for p, q in zip(a, b, strict=True)
-               for x, y in zip(p, q, strict=True))
+    return all(
+        torch.equal(x, y) for p, q in zip(a, b, strict=True) for x, y in zip(p, q, strict=True)
+    )
 
 
 def _dists(seed):
@@ -149,8 +210,9 @@ def test_forward_kl_is_the_formula_every_run_so_far_used():
     old = (ref.exp().masked_fill(~valid, 0.0) * (ref - stu).masked_fill(~valid, 0.0)).sum(-1)
     assert torch.equal(T._kl(ref, stu, valid, "forward"), old)
     tv = (tea > 0) & torch.isfinite(stu)
-    old_t = (tea.masked_fill(~tv, 0.0)
-             * (tea.clamp_min(1e-12).log() - stu).masked_fill(~tv, 0.0)).sum(-1)
+    old_t = (
+        tea.masked_fill(~tv, 0.0) * (tea.clamp_min(1e-12).log() - stu).masked_fill(~tv, 0.0)
+    ).sum(-1)
     assert torch.equal(T._kl(tea.clamp_min(1e-12).log(), stu, tv, "forward", tea), old_t)
 
 
@@ -162,13 +224,40 @@ def test_reverse_kl_is_student_against_target():
     assert not torch.allclose(T._kl(ref, stu, valid, "forward"), want)
 
 
-def test_reverse_kl_changes_training_and_unknown_direction_is_refused(corpus, tmp_path, monkeypatch):
-    plain, _ = _train(corpus, tmp_path / "plain", monkeypatch)
-    fwd, _ = _train(corpus, tmp_path / "fwd", monkeypatch, kl_direction="forward")
-    rev, _ = _train(corpus, tmp_path / "rev", monkeypatch, kl_direction="reverse")
+def test_reverse_kl_changes_training_and_unknown_direction_is_refused(
+    corpus, tmp_path, monkeypatch
+):
+    torch.manual_seed(1)
+    ref_model = _tiny(corpus)
+    plain, _ = _train(
+        corpus, tmp_path / "plain", monkeypatch, ref_model=ref_model, precompute_frozen_kl=True
+    )
+    fwd, _ = _train(
+        corpus,
+        tmp_path / "fwd",
+        monkeypatch,
+        ref_model=ref_model,
+        precompute_frozen_kl=True,
+        kl_direction="forward",
+    )
+    rev, _ = _train(
+        corpus,
+        tmp_path / "rev",
+        monkeypatch,
+        ref_model=ref_model,
+        precompute_frozen_kl=True,
+        kl_direction="reverse",
+    )
     assert _same(plain, fwd) and not _same(fwd, rev)
     with pytest.raises(ValueError, match="kl_direction"):
-        _train(corpus, tmp_path / "bad", monkeypatch, kl_direction="sideways")
+        _train(
+            corpus,
+            tmp_path / "bad",
+            monkeypatch,
+            ref_model=ref_model,
+            precompute_frozen_kl=True,
+            kl_direction="sideways",
+        )
 
 
 def test_teacher_forward_kl_is_unchanged():

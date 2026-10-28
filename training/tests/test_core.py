@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 import torch
 
-from strands_decider.modeling import masked_log_softmax, pool_last_token
+from strands_decider.modeling import (
+    PointerHead,
+    StrandsDeciderConfig,
+    build_head,
+    masked_log_softmax,
+    pool_last_token,
+)
 from strands_decider.prompting import (
     build_prompt,
     read_choice,
@@ -157,7 +165,11 @@ def test_request_accepts_empty_state_and_structured_criteria():
                 "move": {
                     "type": "choice",
                     "instructions": "Best move?",
-                    "criteria": {"b8g8": {"uci": "b8g8", "san": "Qg8"}, "b8b7": "Qb7", "a1a2": None},
+                    "criteria": {
+                        "b8g8": {"uci": "b8g8", "san": "Qg8"},
+                        "b8b7": "Qb7",
+                        "a1a2": None,
+                    },
                 }
             },
         }
@@ -252,9 +264,17 @@ class _FakeTokenizer:
 
     pad_token = "<pad>"
 
-    def __call__(self, texts, padding=True, truncation=True, max_length=64,
-                 return_tensors=None, padding_side="right", add_special_tokens=True,
-                 return_offsets_mapping=False):
+    def __call__(
+        self,
+        texts,
+        padding=True,
+        truncation=True,
+        max_length=64,
+        return_tensors=None,
+        padding_side="right",
+        add_special_tokens=True,
+        return_offsets_mapping=False,
+    ):
         if isinstance(texts, str):
             texts = [texts]
         seqs = [[min(ord(c), 255) for c in t[:max_length]] for t in texts]
@@ -274,9 +294,7 @@ class _FakeTokenizer:
 
 
 def test_collator_label_binding_is_correct():
-    coll = SystemOneCollator(
-        _FakeTokenizer(), CollatorConfig(num_slots=8, seed=3), train=True
-    )
+    coll = SystemOneCollator(_FakeTokenizer(), CollatorConfig(seed=3), train=True)
     ex = _choice_example()
     gold_name = ex.options[ex.label][0]
     for _ in range(30):
@@ -287,9 +305,7 @@ def test_collator_label_binding_is_correct():
 
 
 def test_collator_does_not_shuffle_in_eval_mode():
-    coll = SystemOneCollator(
-        _FakeTokenizer(), CollatorConfig(num_slots=8), train=False
-    )
+    coll = SystemOneCollator(_FakeTokenizer(), CollatorConfig(), train=False)
     ex = _choice_example()
     for _ in range(10):
         assert coll._option_order(ex) is None
@@ -299,7 +315,7 @@ def test_score_options_never_arbitrarily_permuted():
     """Score slots are ordinal: only a full reversal is meaning-preserving."""
     coll = SystemOneCollator(
         _FakeTokenizer(),
-        CollatorConfig(num_slots=8, reverse_score_prob=1.0, seed=1),
+        CollatorConfig(reverse_score_prob=1.0, seed=1),
         train=True,
     )
     ex = Example(
@@ -318,12 +334,16 @@ def test_score_options_never_arbitrarily_permuted():
 def test_ordinal_smoothing_puts_mass_on_neighbours():
     coll = SystemOneCollator(
         _FakeTokenizer(),
-        CollatorConfig(num_slots=8, ordinal_smoothing=0.2, reverse_score_prob=0.0),
+        CollatorConfig(ordinal_smoothing=0.2, reverse_score_prob=0.0),
         train=True,
     )
     ex = Example(
-        kind="score", state="s", instructions="rate",
-        options=[["0", "a"], ["1", "b"], ["2", "c"]], label=1, task="unit",
+        kind="score",
+        state="s",
+        instructions="rate",
+        options=[["0", "a"], ["1", "b"], ["2", "c"]],
+        label=1,
+        task="unit",
     )
     dist = coll._target_distribution(ex, 1, 3, None)
     assert dist is not None
@@ -337,12 +357,16 @@ def test_ordinal_smoothing_at_rubric_edge():
     """Level 0 has only one neighbour; all the smoothing mass goes there."""
     coll = SystemOneCollator(
         _FakeTokenizer(),
-        CollatorConfig(num_slots=8, ordinal_smoothing=0.2, reverse_score_prob=0.0),
+        CollatorConfig(ordinal_smoothing=0.2, reverse_score_prob=0.0),
         train=True,
     )
     ex = Example(
-        kind="score", state="s", instructions="rate",
-        options=[["0", "a"], ["1", "b"], ["2", "c"]], label=0, task="unit",
+        kind="score",
+        state="s",
+        instructions="rate",
+        options=[["0", "a"], ["1", "b"], ["2", "c"]],
+        label=0,
+        task="unit",
     )
     dist = coll._target_distribution(ex, 0, 3, None)
     assert dist[0].item() == pytest.approx(0.8)
@@ -350,26 +374,18 @@ def test_ordinal_smoothing_at_rubric_edge():
     assert dist[2].item() == pytest.approx(0.0)
 
 
-def test_collator_rejects_more_options_than_slots():
-    coll = SystemOneCollator(_FakeTokenizer(), CollatorConfig(num_slots=2), train=True)
-    with pytest.raises(ValueError, match="only 2 slots"):
-        coll([_choice_example()])
-
-
 # ---------------------------------------------------------------- data format
 
 
 def test_example_rejects_out_of_range_label():
     with pytest.raises(ValueError):
-        Example(kind="choice", state="s", instructions="i",
-                options=[["a", ""], ["b", ""]], label=2)
+        Example(kind="choice", state="s", instructions="i", options=[["a", ""], ["b", ""]], label=2)
 
 
 def test_split_is_stratified_by_task():
-    examples = (
-        [Example("noul", "s", "i", [["false", ""], ["true", ""]], 0, task="big")] * 200
-        + [Example("noul", "s", "i", [["false", ""], ["true", ""]], 1, task="tiny")] * 4
-    )
+    examples = [Example("noul", "s", "i", [["false", ""], ["true", ""]], 0, task="big")] * 200 + [
+        Example("noul", "s", "i", [["false", ""], ["true", ""]], 1, task="tiny")
+    ] * 4
     train, val = split_examples(examples, val_fraction=0.1, seed=0)
     # The small task must survive into both halves rather than vanishing.
     assert any(e.task == "tiny" for e in train)
@@ -469,10 +485,13 @@ def test_sample_is_representative_not_a_prefix():
     """Corpora are grouped by task; a head slice evaluates one task and calls it overall."""
     from training.evaluate import sample_examples
 
-    grouped = (
-        [Example("noul", f"a{i}", "i", [["false", ""], ["true", ""]], 0, task="A") for i in range(500)]
-        + [Example("noul", f"b{i}", "i", [["false", ""], ["true", ""]], 1, task="B") for i in range(500)]
-    )
+    grouped = [
+        Example("noul", f"a{i}", "i", [["false", ""], ["true", ""]], 0, task="A")
+        for i in range(500)
+    ] + [
+        Example("noul", f"b{i}", "i", [["false", ""], ["true", ""]], 1, task="B")
+        for i in range(500)
+    ]
     picked = sample_examples(grouped, 200)
     tasks = {e.task for e in picked}
     assert tasks == {"A", "B"}, "sampling collapsed onto a single task"
@@ -609,8 +628,7 @@ def test_fit_temperature_by_kind_skips_thin_primitives():
     from training.evaluate import fit_temperature_by_kind
 
     examples = [
-        Example("noul", "s", "i", [["false", ""], ["true", ""]], 0, task="t")
-        for _ in range(10)
+        Example("noul", "s", "i", [["false", ""], ["true", ""]], 0, task="t") for _ in range(10)
     ]
     logits = torch.randn(10, 8)
     t = fit_temperature_by_kind(
@@ -638,9 +656,7 @@ def test_ece_and_nll_objectives_can_disagree():
         v[lab] += 3.0  # separable but noisy: confident and often, but not always, right
         rows.append(v)
         labels.append(lab)
-        examples.append(
-            Example("noul", "s", "i", [["false", ""], ["true", ""]], lab, task="t")
-        )
+        examples.append(Example("noul", "s", "i", [["false", ""], ["true", ""]], lab, task="t"))
     logits = torch.stack(rows)
     y = torch.tensor(labels)
     slots = torch.full((n,), 2)
@@ -658,8 +674,12 @@ def test_fit_temperature_rejects_unknown_objective():
     from training.evaluate import fit_temperature
 
     with pytest.raises(ValueError, match="nll"):
-        fit_temperature(torch.randn(4, 8), torch.zeros(4, dtype=torch.long),
-                        torch.full((4,), 2), objective="brier")
+        fit_temperature(
+            torch.randn(4, 8),
+            torch.zeros(4, dtype=torch.long),
+            torch.full((4,), 2),
+            objective="brier",
+        )
 
 
 def test_fit_temperature_ece_requires_examples():
@@ -667,8 +687,12 @@ def test_fit_temperature_ece_requires_examples():
     from training.evaluate import fit_temperature
 
     with pytest.raises(ValueError, match="examples"):
-        fit_temperature(torch.randn(4, 8), torch.zeros(4, dtype=torch.long),
-                        torch.full((4,), 2), objective="ece")
+        fit_temperature(
+            torch.randn(4, 8),
+            torch.zeros(4, dtype=torch.long),
+            torch.full((4,), 2),
+            objective="ece",
+        )
 
 
 # ---------------------------------------------------------------- instruction variants
@@ -676,8 +700,12 @@ def test_fit_temperature_ece_requires_examples():
 
 def _varied_example():
     return Example(
-        "choice", "s", "Which section does this belong to?",
-        [["a", ""], ["b", ""]], 0, task="t",
+        "choice",
+        "s",
+        "Which section does this belong to?",
+        [["a", ""], ["b", ""]],
+        0,
+        task="t",
         instruction_variants=["What is this about?", "Pick a section."],
     )
 
@@ -685,9 +713,7 @@ def _varied_example():
 def test_collator_samples_among_instruction_phrasings():
     """A head that keyed on the exact instruction string should be wrong most of
     the time -- the same argument that motivates option shuffling."""
-    coll = SystemOneCollator(
-        _FakeTokenizer(), CollatorConfig(num_slots=8, seed=1), train=True
-    )
+    coll = SystemOneCollator(_FakeTokenizer(), CollatorConfig(seed=1), train=True)
     ex = _varied_example()
     seen = {coll._instruction(ex) for _ in range(200)}
     assert seen == set(ex.all_instructions())
@@ -695,7 +721,7 @@ def test_collator_samples_among_instruction_phrasings():
 
 def test_eval_always_uses_the_canonical_phrasing():
     """Otherwise successive eval runs of the same checkpoint would not be comparable."""
-    coll = SystemOneCollator(_FakeTokenizer(), CollatorConfig(num_slots=8), train=False)
+    coll = SystemOneCollator(_FakeTokenizer(), CollatorConfig(), train=False)
     ex = _varied_example()
     assert {coll._instruction(ex) for _ in range(20)} == {None}
 
@@ -703,16 +729,14 @@ def test_eval_always_uses_the_canonical_phrasing():
 def test_instruction_variation_can_be_disabled():
     coll = SystemOneCollator(
         _FakeTokenizer(),
-        CollatorConfig(num_slots=8, vary_instructions=False),
+        CollatorConfig(vary_instructions=False),
         train=True,
     )
     assert coll._instruction(_varied_example()) is None
 
 
 def test_example_without_variants_is_unaffected():
-    coll = SystemOneCollator(
-        _FakeTokenizer(), CollatorConfig(num_slots=8, seed=1), train=True
-    )
+    coll = SystemOneCollator(_FakeTokenizer(), CollatorConfig(seed=1), train=True)
     plain = Example("choice", "s", "only phrasing", [["a", ""], ["b", ""]], 0, task="t")
     assert coll._instruction(plain) is None
     assert plain.all_instructions() == ["only phrasing"]
@@ -727,8 +751,6 @@ def test_sampled_phrasing_reaches_the_prompt():
 
 
 def test_instruction_variants_round_trip_through_jsonl():
-    import json
-
     ex = _varied_example()
     back = Example.from_dict(json.loads(ex.to_json()))
     assert back.instruction_variants == ex.instruction_variants
@@ -737,8 +759,6 @@ def test_instruction_variants_round_trip_through_jsonl():
 
 def test_legacy_examples_without_the_field_still_load():
     """Corpora built before instruction variants existed must keep working."""
-    import json
-
     d = json.loads(_varied_example().to_json())
     del d["instruction_variants"]
     back = Example.from_dict(d)
@@ -811,7 +831,7 @@ def test_option_token_index_refuses_a_truncated_option():
 def test_pointer_collator_emits_padded_option_indices():
     coll = SystemOneCollator(
         _FakeTokenizer(),
-        CollatorConfig(num_slots=24, head_type="pointer", max_length=4096),
+        CollatorConfig(max_length=4096),
         train=False,
     )
     noul = Example(
@@ -827,19 +847,12 @@ def test_pointer_collator_emits_padded_option_indices():
     n_opts = [_choice_example().n_options, noul.n_options]
     assert batch["opt_idx"].shape == (2, max(n_opts))
     for row, k in zip(batch["opt_idx"].tolist(), n_opts, strict=True):
-        assert all(i >= 0 for i in row[:k])       # real positions
-        assert all(i == -1 for i in row[k:])      # padding
+        assert all(i >= 0 for i in row[:k])  # real positions
+        assert all(i == -1 for i in row[k:])  # padding
 
 
-def test_slot_collator_emits_no_option_indices():
-    coll = SystemOneCollator(
-        _FakeTokenizer(), CollatorConfig(num_slots=24), train=False
-    )
-    assert "opt_idx" not in coll([_choice_example()])
-
-
-def test_pointer_collator_allows_more_options_than_num_slots():
-    """The slot count is a property of the fixed-width readout, not of the model."""
+def test_pointer_collator_handles_any_option_count():
+    """A pointer collator has no fixed-slot ceiling: opt_idx stretches to the row width."""
     wide = Example(
         kind="choice",
         state="s",
@@ -850,21 +863,13 @@ def test_pointer_collator_allows_more_options_than_num_slots():
     )
     pointer = SystemOneCollator(
         _FakeTokenizer(),
-        CollatorConfig(num_slots=24, head_type="pointer", max_length=8192),
+        CollatorConfig(max_length=8192),
         train=False,
     )
     assert pointer([wide])["opt_idx"].shape[1] == 30
 
-    slot = SystemOneCollator(
-        _FakeTokenizer(), CollatorConfig(num_slots=24, max_length=8192), train=False
-    )
-    with pytest.raises(ValueError, match="only 24 slots"):
-        slot([wide])
-
 
 def test_pointer_head_scores_each_option_from_its_own_state():
-    from strands_decider.modeling import PointerHead
-
     head = PointerHead(16, dim=8)
     decide = torch.randn(2, 16)
     options = torch.randn(2, 5, 16)
@@ -889,19 +894,26 @@ def test_gather_options_ignores_padding():
     assert torch.equal(out[1, 2], hidden[1, 7])
 
 
-def test_build_head_branches_on_head_type():
-    from strands_decider.modeling import PointerHead, SlotHead, StrandsDeciderConfig, build_head
-
-    assert isinstance(build_head(StrandsDeciderConfig(), 32), SlotHead)
-    assert isinstance(build_head(StrandsDeciderConfig(head_type="pointer"), 32), PointerHead)
-    with pytest.raises(ValueError, match="unknown head_type"):
-        build_head(StrandsDeciderConfig(head_type="nonsense"), 32)
+def test_build_head_returns_pointer_head():
+    assert isinstance(build_head(StrandsDeciderConfig(), 32), PointerHead)
 
 
-def test_head_type_defaults_to_slot_so_old_checkpoints_load():
-    from strands_decider.modeling import StrandsDeciderConfig
+def test_slot_era_head_type_is_rejected_by_config_loader(tmp_path):
+    """A checkpoint whose config names a slot head fails cleanly, not silently."""
+    path = tmp_path / "cfg.json"
+    path.write_text(json.dumps({"base_model": "x", "head_type": "slot"}))
+    with pytest.raises(ValueError, match="pointer-head"):
+        StrandsDeciderConfig.from_json(str(path))
+    # A legacy `head_type: "pointer"` config loads unchanged (the field is dropped).
+    path.write_text(json.dumps({"base_model": "x", "head_type": "pointer", "num_slots": 24}))
+    cfg = StrandsDeciderConfig.from_json(str(path))
+    assert cfg.base_model == "x"
 
-    assert StrandsDeciderConfig().head_type == "slot"
+
+def test_head_type_is_written_to_the_exported_config():
+    """Older strands-decider versions default a missing head_type to slot and crash on a
+    pointer export, and out-of-tree readers may parse this field directly."""
+    assert json.loads(StrandsDeciderConfig(base_model="x").to_json())["head_type"] == "pointer"
 
 
 def test_collect_logits_masks_the_padded_columns():
@@ -915,9 +927,9 @@ def test_collect_logits_masks_the_padded_columns():
         tokenizer = _FakeTokenizer()
 
         class config:
-            num_slots = 24
-            head_type = "pointer"
             max_length = 3072
+
+        torso = torch.nn.Module()  # no parameters: the CPU upcast has nothing to cast
 
         def eval(self):
             return self
@@ -931,8 +943,14 @@ def test_collect_logits_masks_the_padded_columns():
             return {"logits": torch.arange(k, dtype=torch.float32).expand(b, k)}
 
     exs = [
-        Example(kind="choice", state="s", instructions="q",
-                options=[[f"o{i}", ""] for i in range(n)], label=0, task="t")
+        Example(
+            kind="choice",
+            state="s",
+            instructions="q",
+            options=[[f"o{i}", ""] for i in range(n)],
+            label=0,
+            task="t",
+        )
         for n in (2, 5, 3, 2)
     ]
     logits, _, slots, _ = collect_logits(_Stub(), exs, device="cpu", batch_size=4)
@@ -947,13 +965,17 @@ def test_teacher_targets_follow_option_shuffling():
     """Slot k must carry the teacher's mass for the option actually shown at slot k."""
     names = ["World", "Sports", "Business", "Sci/Tech", "Health"]
     teacher = [0.05, 0.6, 0.2, 0.1, 0.05]
-    coll = SystemOneCollator(
-        _FakeTokenizer(), CollatorConfig(head_type="pointer", seed=3), train=True
-    )
+    coll = SystemOneCollator(_FakeTokenizer(), CollatorConfig(seed=3), train=True)
     slots = set()
     for _ in range(20):
-        ex = Example(kind="choice", state="Arsenal won 3-1.", instructions="Which section?",
-                     options=[[n, ""] for n in names], label=1, task="t")
+        ex = Example(
+            kind="choice",
+            state="Arsenal won 3-1.",
+            instructions="Which section?",
+            options=[[n, ""] for n in names],
+            label=1,
+            task="t",
+        )
         ex.teacher = teacher
         out = coll([ex])
         slot_gold = int(out["labels"][0])  # where the shuffle put the gold option

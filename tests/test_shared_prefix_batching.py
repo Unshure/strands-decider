@@ -142,7 +142,7 @@ def _engine(kind="qwen3", **kw):
     """Strict-window engine, so prepare() fills PreparedPrefix for multi-question requests."""
     return SystemOneEngine(
         _model(kind),
-        EngineConfig(device="cpu", strict_window=True, use_prefix_cache=True, **kw),
+        EngineConfig(device="cpu", use_prefix_cache=True, **kw),
     )
 
 
@@ -156,7 +156,7 @@ def test_cross_request_matches_isolated_shared_prefix(kind):
     (which takes the per-request shared-prefix path for multi-Q)."""
     eng = _engine(kind)
     # Build four requests whose states tokenise to the same length (same text, varied
-    # questions). strict_window + identical state => same state_ids.
+    # questions).
     text = "event logged; " * 5
     reqs = []
     for i in range(4):
@@ -178,9 +178,7 @@ def test_cross_request_matches_isolated_shared_prefix(kind):
         )
     isolated = [eng.evaluate(r) for r in reqs]
     prepared = [eng.prepare(r) for r in reqs]
-    assert all(p.prefix is not None for p in prepared), (
-        "multi-Q with strict_window should fill PreparedPrefix"
-    )
+    assert all(p.prefix is not None for p in prepared), "multi-Q should fill PreparedPrefix"
     together = eng.evaluate_prepared(prepared)
     assert len(together) == len(isolated)
     for iso, tog in zip(isolated, together, strict=True):

@@ -60,12 +60,6 @@ class EngineConfig:
     use_prefix_cache: bool = True
     max_batch: int = 32
     model_name: str = f"strands-decider-{__version__}"
-    # Largest share of the context window the question may claim before the state
-    # starts being squeezed. Questions are normally short, so this rarely binds.
-    max_question_fraction: float = 0.75
-    # Refuse a prompt that does not fit the window instead of shortening it, for
-    # benchmarks that forbid truncation. The message names the "context window".
-    strict_window: bool = False
     # Also cap the tokens of one forward: a chunk of up to max_batch questions is cut
     # where its rows, fitted to the window and padded to the longest (state + question),
     # would pass this many tokens (one question at least). Questions are fitted before the
@@ -112,10 +106,9 @@ class PreparedPrefix:
     `state_ids` encodes the state once. Each question has its own `question_ids` and
     option character `offsets`, both aligned with the request's `rendered`.
 
-    Filled only when `strict_window` is on (so the state tokenisation does not depend on
-    the questions, and all state_ids are deterministic) and the cache is forkable.
-    Otherwise `prepare` leaves `rows` and `prefix` both None, and the request runs alone
-    through `evaluate`.
+    Filled when the request has more than one question and the cache is forkable. The
+    engine refuses any prompt that does not fit the context window, so a single
+    tokenisation of the state is always deterministic across chunks.
     """
 
     state_ids: list[int]
@@ -133,7 +126,7 @@ class PreparedRequest:
       prefix forward, then one shared suffix forward across requests of equal state
       length).
     - both None: the request runs alone through `evaluate` (vision / MLX engines, or
-      the shared-prefix path when `strict_window` is off).
+      the shared-prefix path).
     """
 
     request: SystemOneRequest
@@ -405,24 +398,13 @@ class SystemOneEngine:
     def _fit(
         self, state_text: str, question_texts: list[str]
     ) -> tuple[list[int], list[list[int]], list[list[tuple[int, int]]]]:
-        """Tokenise state and questions, giving the QUESTION first claim on the window.
+        """Tokenise state and questions, refusing any prompt that does not fit the window.
 
-        The question and its options are what make a task answerable; the state is the
-        part that can be sampled. Letting the state take the window first meant a long
-        state consumed all of it and left the question a floor of 8 tokens -- far too
-        few to hold the option list, so the model was choosing among options it could
-        not see. Measured on JevBench, all 19 `long_policy` states hit the cap exactly,
-        and accuracy there (0.316) sat on top of the 0.301 chance rate for those option
-        counts.
-
-        A question longer than its reserve is truncated from the FRONT, keeping the
-        tail. The options and the trailing `<answer>` marker are structurally required
-        -- `<answer>` is the pooling position, so losing it makes the head read an
-        arbitrary token -- whereas losing some instruction text only costs meaning.
-
-        Returns state ids, question ids, and each question's character offsets. The
-        offsets are returned, not kept on the engine: the server runs requests
-        concurrently on one engine, so engine state would be shared across requests.
+        A prompt where the state plus the longest question exceeds the model's context
+        window raises ValueError (HTTP 422 at the server). Callers never see truncated
+        state or questions. Returns state ids, question ids, and each question's
+        character offsets, as locals rather than on the engine (the server runs requests
+        concurrently and engine state would be shared across requests).
         """
         max_len = self.model.config.max_length
         with self._tok_lock:
@@ -430,29 +412,13 @@ class SystemOneEngine:
             q = enc["input_ids"]
             offs = enc["offset_mapping"]
             longest = max(len(x) for x in q)
-            if self.cfg.strict_window:
-                s = self.tok(state_text, add_special_tokens=True)["input_ids"]
-                if len(s) + longest > max_len:
-                    raise ValueError(
-                        f"prompt of {len(s) + longest} tokens exceeds the context window "
-                        f"of {max_len} tokens"
-                    )
-                return s, q, list(offs)
-            # Cap the reserve so a pathological question cannot starve the state entirely.
-            reserve = min(longest, max(1, int(max_len * self.cfg.max_question_fraction)))
-            # Front truncation shifts every token index, so the offsets move with the ids
-            # and a pointer readout keeps pointing at the right option.
-            cut = [max(0, len(x) - reserve) for x in q]
-            kept = [o[c:] for o, c in zip(offs, cut, strict=True)]
-            q = [x[c:] for x, c in zip(q, cut, strict=True)]
-            state_budget = max(1, max_len - reserve)
-            s = self.tok(
-                state_text,
-                add_special_tokens=True,
-                truncation=True,
-                max_length=state_budget,
-            )["input_ids"]
-        return s, q, kept
+            s = self.tok(state_text, add_special_tokens=True)["input_ids"]
+            if len(s) + longest > max_len:
+                raise ValueError(
+                    f"prompt of {len(s) + longest} tokens exceeds the context window "
+                    f"of {max_len} tokens"
+                )
+            return s, q, list(offs)
 
     def _option_idx(
         self,
@@ -781,24 +747,17 @@ class SystemOneEngine:
         chunks = self._chunks(state_text, rendered)
         multi_q = any(c.stop - c.start > 1 for c, *_ in chunks)
         if self.cfg.use_prefix_cache and not self._prefix_cache_unforkable and multi_q:
-            # Cross-request shared-prefix batching needs the state tokenised the same way
-            # regardless of which questions share it. With strict_window on, `_fit` encodes
-            # the state once (no front-truncation reserve depends on the questions), so all
-            # chunks give the same state_ids and we can pull a single prefix out of them.
-            # Otherwise the request takes the per-request shared-prefix path alone.
-            if self.cfg.strict_window:
-                flat_q: list[list[int]] = []
-                flat_offsets: list[list[tuple[int, int]]] = []
-                state_ids = chunks[0][1]
-                for _, s, q, offsets in chunks:
-                    assert s == state_ids  # strict_window makes this trivial
-                    flat_q.extend(q)
-                    flat_offsets.extend(offsets)
-                prefix = PreparedPrefix(
-                    state_ids=state_ids, question_ids=flat_q, offsets=flat_offsets
-                )
-                return PreparedRequest(request, names, rendered, None, prefix)
-            return PreparedRequest(request, names, rendered, None)  # shared-prefix path, alone
+            # `_fit` encodes the state the same way for every chunk (no question-dependent
+            # truncation), so one PreparedPrefix carries them all.
+            flat_q: list[list[int]] = []
+            flat_offsets: list[list[tuple[int, int]]] = []
+            state_ids = chunks[0][1]
+            for _, s, q, offsets in chunks:
+                assert s == state_ids
+                flat_q.extend(q)
+                flat_offsets.extend(offsets)
+            prefix = PreparedPrefix(state_ids=state_ids, question_ids=flat_q, offsets=flat_offsets)
+            return PreparedRequest(request, names, rendered, None, prefix)
         pointer = self.model.config.head_type == "pointer"
         rows: list[PreparedRow] = []
         for chunk, s, q, offsets in chunks:
@@ -993,7 +952,7 @@ class SystemOneEngine:
 
         Row-prepared requests go through `plan_rows` and shared row forwards; prefix-prepared
         requests go through `plan_prefix_groups` and shared prefix+suffix forwards; requests
-        with neither (vision/MLX, or strict_window off) run alone through `evaluate`.
+        with neither (vision/MLX engines) run alone through `evaluate`.
         """
         results: list[SystemOneResponse | BaseException | None] = [None] * len(prepared)
         flat: list[PreparedRow] = []

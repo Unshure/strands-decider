@@ -9,6 +9,7 @@ family (plain Qwen3, hybrid Qwen3.5, Gemma 4 with per-layer inputs and eager att
 plus the planner's budgets, OOM splitting, error isolation and the server wiring.
 CPU only.
 """
+
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
@@ -37,38 +38,80 @@ def _tokenizer():
     tok = Tokenizer(models.BPE())
     tok.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
     tok.decoder = decoders.ByteLevel()
-    tok.train_from_iterator(["<state> <question> <options> <answer> choice score noul"],
-                            trainers.BpeTrainer(vocab_size=300, special_tokens=["<pad>", "<eos>"],
-                                                initial_alphabet=pre_tokenizers.ByteLevel.alphabet()))
+    tok.train_from_iterator(
+        ["<state> <question> <options> <answer> choice score noul"],
+        trainers.BpeTrainer(
+            vocab_size=300,
+            special_tokens=["<pad>", "<eos>"],
+            initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
+        ),
+    )
     return PreTrainedTokenizerFast(tokenizer_object=tok, pad_token="<pad>", eos_token="<eos>")
 
 
 def _torso(kind, vocab):
     torch.manual_seed(0)
     if kind == "qwen3":
-        return transformers.Qwen3Model(transformers.Qwen3Config(
-            vocab_size=vocab, hidden_size=32, intermediate_size=64, num_hidden_layers=2,
-            num_attention_heads=4, num_key_value_heads=2, head_dim=8))
+        return transformers.Qwen3Model(
+            transformers.Qwen3Config(
+                vocab_size=vocab,
+                hidden_size=32,
+                intermediate_size=64,
+                num_hidden_layers=2,
+                num_attention_heads=4,
+                num_key_value_heads=2,
+                head_dim=8,
+            )
+        )
     if kind == "qwen3_5":
         if not hasattr(transformers, "Qwen3_5TextConfig"):
             pytest.skip("this transformers has no Qwen3.5")
         cfg = transformers.Qwen3_5TextConfig(
-            vocab_size=vocab, hidden_size=64, intermediate_size=128, num_hidden_layers=4,
-            num_attention_heads=4, num_key_value_heads=2, head_dim=16,
-            linear_num_key_heads=2, linear_num_value_heads=4, linear_key_head_dim=16,
+            vocab_size=vocab,
+            hidden_size=64,
+            intermediate_size=128,
+            num_hidden_layers=4,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            head_dim=16,
+            linear_num_key_heads=2,
+            linear_num_value_heads=4,
+            linear_key_head_dim=16,
             linear_value_head_dim=16,
-            layer_types=["linear_attention", "linear_attention", "linear_attention", "full_attention"])
+            layer_types=[
+                "linear_attention",
+                "linear_attention",
+                "linear_attention",
+                "full_attention",
+            ],
+        )
         return transformers.Qwen3_5ForCausalLM(cfg).model.eval()
     if kind == "gemma4":
         if not hasattr(transformers, "Gemma4TextConfig"):
             pytest.skip("this transformers has no Gemma 4")
         cfg = transformers.Gemma4TextConfig(
-            vocab_size=vocab, hidden_size=64, intermediate_size=128, num_hidden_layers=4,
-            num_attention_heads=2, num_key_value_heads=1, head_dim=16, global_head_dim=16,
-            hidden_size_per_layer_input=8, vocab_size_per_layer_input=vocab,
-            layer_types=["sliding_attention", "sliding_attention", "full_attention", "sliding_attention"],
-            sliding_window=8, num_kv_shared_layers=1, final_logit_softcapping=30.0,
-            tie_word_embeddings=True, pad_token_id=0)
+            vocab_size=vocab,
+            hidden_size=64,
+            intermediate_size=128,
+            num_hidden_layers=4,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            head_dim=16,
+            global_head_dim=16,
+            hidden_size_per_layer_input=8,
+            vocab_size_per_layer_input=vocab,
+            layer_types=[
+                "sliding_attention",
+                "sliding_attention",
+                "full_attention",
+                "sliding_attention",
+            ],
+            sliding_window=8,
+            num_kv_shared_layers=1,
+            final_logit_softcapping=30.0,
+            tie_word_embeddings=True,
+            pad_token_id=0,
+        )
         torso = transformers.Gemma4ForCausalLM(cfg).model.eval()
         torso.set_attn_implementation("eager")  # as served for E2B (one KV head)
         return torso
@@ -77,13 +120,19 @@ def _torso(kind, vocab):
 
 def _model(kind="qwen3"):
     tok = _tokenizer()
-    cfg = StrandsDeciderConfig(base_model="tiny", head_type="pointer", pointer_dim=16,
-                               use_lora=False, torch_dtype="float32", max_length=512)
+    cfg = StrandsDeciderConfig(
+        base_model="tiny",
+        head_type="pointer",
+        pointer_dim=16,
+        use_lora=False,
+        torch_dtype="float32",
+        max_length=512,
+    )
     return StrandsDeciderModel(cfg, _torso(kind, len(tok)), tok)
 
 
 def _engine(kind="qwen3", **kw):
-    return SystemOneEngine(_model(kind), EngineConfig(device="cpu", strict_window=True, **kw))
+    return SystemOneEngine(_model(kind), EngineConfig(device="cpu", **kw))
 
 
 def _requests(n=24):
@@ -92,13 +141,19 @@ def _requests(n=24):
     for i in range(n):
         state = f"event {i} logged; " * (1 + (i * 7) % 13)
         if i % 3 == 0:
-            q = ChoiceQuestion(type="choice", instructions="pick " * (1 + i % 5),
-                               criteria={f"option{k}" + "x" * ((i + k) % 7): "" for k in range(2 + i % 4)})
+            q = ChoiceQuestion(
+                type="choice",
+                instructions="pick " * (1 + i % 5),
+                criteria={f"option{k}" + "x" * ((i + k) % 7): "" for k in range(2 + i % 4)},
+            )
         elif i % 3 == 1:
             q = NoulQuestion(type="noul", instructions="is it ok? " * (1 + i % 3))
         else:
-            q = ScoreQuestion(type="score", instructions="rate it",
-                              criteria=[f"level {k}" for k in range(3 + i % 3)])
+            q = ScoreQuestion(
+                type="score",
+                instructions="rate it",
+                criteria=[f"level {k}" for k in range(3 + i % 3)],
+            )
         out.append(SystemOneRequest(state=state, questions={"q": q}))
     return out
 
@@ -137,8 +192,9 @@ def test_rows_match_bit_for_bit_in_fp32_tolerance(kind):
     together = eng._forward_rows(rows)
     for j, r in enumerate(rows):
         alone = eng._forward_rows([r])
-        torch.testing.assert_close(together[j, : r.n_slots], alone[0, : r.n_slots],
-                                   atol=1e-5, rtol=1e-5)
+        torch.testing.assert_close(
+            together[j, : r.n_slots], alone[0, : r.n_slots], atol=1e-5, rtol=1e-5
+        )
 
 
 def test_plan_respects_budgets():
@@ -149,8 +205,8 @@ def test_plan_respects_budgets():
         assert len(g) <= 3
         assert len(g) == 1 or len(g) * max(lengths[i] for i in g) <= 400
     # quadratic cap (eager attention): rows x longest^2 <= cap
-    for g in plan_rows(lengths, max_tokens=10_000, max_rows=64, quadratic_cap=300 ** 2):
-        assert len(g) == 1 or len(g) * max(lengths[i] for i in g) ** 2 <= 300 ** 2
+    for g in plan_rows(lengths, max_tokens=10_000, max_rows=64, quadratic_cap=300**2):
+        assert len(g) == 1 or len(g) * max(lengths[i] for i in g) ** 2 <= 300**2
     # a row over the budget alone still runs, alone
     assert plan_rows([1000, 10], max_tokens=100, max_rows=8) == [[1], [0]]
     # padding waste: long rows of unlike length do not pad together; short forwards may
@@ -244,12 +300,17 @@ def test_multi_question_requests_take_the_shared_prefix_path():
 
 
 def _client(monkeypatch, engine_factory=None, wait_ms=5.0, kind="qwen3"):
-    monkeypatch.setattr(server.StrandsDeciderModel, "load", classmethod(lambda cls, *a, **k: _model(kind)))
+    monkeypatch.setattr(
+        server.StrandsDeciderModel, "load", classmethod(lambda cls, *a, **k: _model(kind))
+    )
     if engine_factory is not None:
         monkeypatch.setattr(server, "SystemOneEngine", engine_factory)
-    return TestClient(server.create_app("checkpoints/does-not-exist", device="cpu", strict_window=True,
-                                        batching=True, batch_wait_ms=wait_ms),
-                      raise_server_exceptions=False)
+    return TestClient(
+        server.create_app(
+            "checkpoints/does-not-exist", device="cpu", batching=True, batch_wait_ms=wait_ms
+        ),
+        raise_server_exceptions=False,
+    )
 
 
 def _body(req):
@@ -266,7 +327,10 @@ def test_server_batches_concurrent_requests(monkeypatch, kind):
     for s, p in zip(serial, par, strict=True):
         assert p.status_code == 200, p.text
         a, b = s["answers"]["q"], p.json()["answers"]["q"]
-        _close(a.get("probabilities") or {"noul": a["noul"]}, b.get("probabilities") or {"noul": b["noul"]})
+        _close(
+            a.get("probabilities") or {"noul": a["noul"]},
+            b.get("probabilities") or {"noul": b["noul"]},
+        )
     h = client.get("/health").json()
     assert h["batching"]["requests"] == 48
     assert h["batching"]["max_requests_per_cycle"] > 1  # requests did share forwards
@@ -285,6 +349,7 @@ def test_server_refusal_is_422_and_neighbours_are_answered(monkeypatch):
 def test_server_error_fails_only_that_request_and_keeps_serving(monkeypatch):
     """An error in the device thread fails the request(s) it belongs to (HTTP 500, as
     without batching) and the batcher keeps serving the next ones."""
+
     class _OomOnce(SystemOneEngine):
         hit = False
 
@@ -303,8 +368,10 @@ def test_server_error_fails_only_that_request_and_keeps_serving(monkeypatch):
 
 def test_server_without_batching_is_unchanged(monkeypatch):
     """Off by default on CPU (and MPS, MLX): requests run as before."""
-    monkeypatch.setattr(server.StrandsDeciderModel, "load", classmethod(lambda cls, *a, **k: _model()))
-    client = TestClient(server.create_app("checkpoints/does-not-exist", device="cpu", strict_window=True))
+    monkeypatch.setattr(
+        server.StrandsDeciderModel, "load", classmethod(lambda cls, *a, **k: _model())
+    )
+    client = TestClient(server.create_app("checkpoints/does-not-exist", device="cpu"))
     assert client.get("/health").json()["batching"] is None
 
 
@@ -315,15 +382,20 @@ class _AloneEngine(SystemOneEngine):
         return super().evaluate(request)
 
 
-@pytest.mark.parametrize("batching, factory, on", [
-    (None, None, True),            # the CUDA default
-    (False, None, False),          # --no-batching
-    (None, _AloneEngine, False),   # an engine that scores requests alone is not queued
-])
+@pytest.mark.parametrize(
+    "batching, factory, on",
+    [
+        (None, None, True),  # the CUDA default
+        (False, None, False),  # --no-batching
+        (None, _AloneEngine, False),  # an engine that scores requests alone is not queued
+    ],
+)
 def test_batching_defaults_on_for_cuda(monkeypatch, batching, factory, on):
     """Only /health is called: the "cuda" engine's tiny model stays on the CPU, and the
     startup tune (on by default with batching on CUDA) is recorded rather than timed."""
-    monkeypatch.setattr(server.StrandsDeciderModel, "load", classmethod(lambda cls, *a, **k: _model()))
+    monkeypatch.setattr(
+        server.StrandsDeciderModel, "load", classmethod(lambda cls, *a, **k: _model())
+    )
     monkeypatch.setattr(StrandsDeciderModel, "to", lambda self, *a, **k: self)
     tuned = []
 
@@ -335,8 +407,13 @@ def test_batching_defaults_on_for_cuda(monkeypatch, batching, factory, on):
     monkeypatch.setattr(SystemOneEngine, "tune_batching", tune)
     if factory is not None:
         monkeypatch.setattr(server, "SystemOneEngine", factory)
-    app = server.create_app("checkpoints/does-not-exist", device="cuda", batching=batching,
-                            max_batch=16, max_batch_tokens=4096)
+    app = server.create_app(
+        "checkpoints/does-not-exist",
+        device="cuda",
+        batching=batching,
+        max_batch=16,
+        max_batch_tokens=4096,
+    )
     h = TestClient(app).get("/health").json()
     assert (h["batching"] is not None) is on
     assert bool(tuned) is on  # tuned exactly when batching
@@ -347,9 +424,13 @@ def test_batching_defaults_on_for_cuda(monkeypatch, batching, factory, on):
 
 
 def test_no_batch_tune_skips_the_startup_tune(monkeypatch):
-    monkeypatch.setattr(server.StrandsDeciderModel, "load", classmethod(lambda cls, *a, **k: _model()))
+    monkeypatch.setattr(
+        server.StrandsDeciderModel, "load", classmethod(lambda cls, *a, **k: _model())
+    )
     monkeypatch.setattr(StrandsDeciderModel, "to", lambda self, *a, **k: self)
-    monkeypatch.setattr(SystemOneEngine, "tune_batching", lambda self, *a, **k: pytest.fail("tuned"))
+    monkeypatch.setattr(
+        SystemOneEngine, "tune_batching", lambda self, *a, **k: pytest.fail("tuned")
+    )
     app = server.create_app("checkpoints/does-not-exist", device="cuda", batch_tune=False)
     assert TestClient(app).get("/health").json()["batching"]["rows_by_width"] is None
 

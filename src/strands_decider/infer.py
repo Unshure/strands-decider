@@ -106,21 +106,49 @@ class PreparedRow:
 
 
 @dataclass
+class PreparedPrefix:
+    """Several questions on one state, ready for the cross-request shared-prefix path.
+
+    `state_ids` encodes the state once. Each question has its own `question_ids` and
+    option character `offsets`, both aligned with the request's `rendered`.
+
+    Filled only when `strict_window` is on (so the state tokenisation does not depend on
+    the questions, and all state_ids are deterministic) and the cache is forkable.
+    Otherwise `prepare` leaves `rows` and `prefix` both None, and the request runs alone
+    through `evaluate`.
+    """
+
+    state_ids: list[int]
+    question_ids: list[list[int]]
+    offsets: list[list[tuple[int, int]]]
+
+
+@dataclass
 class PreparedRequest:
     """A request tokenised on the host, ready for `evaluate_prepared`.
 
-    `rows` is None when the request takes the shared-prefix path (several questions on one
-    state with the prefix cache on): it then runs alone, through `evaluate`.
+    Three ways a prepared request runs:
+    - `rows` not None, `prefix` None: cross-request row batching (one row per question).
+    - `rows` None, `prefix` not None: cross-request shared-prefix batching (one shared
+      prefix forward, then one shared suffix forward across requests of equal state
+      length).
+    - both None: the request runs alone through `evaluate` (vision / MLX engines, or
+      the shared-prefix path when `strict_window` is off).
     """
 
     request: SystemOneRequest
     names: list[str]
     rendered: list[RenderedQuestion]
     rows: list[PreparedRow] | None
+    prefix: PreparedPrefix | None = None
 
     @property
     def tokens(self) -> int:
-        return sum(len(r.ids) for r in self.rows) if self.rows is not None else 0
+        if self.rows is not None:
+            return sum(len(r.ids) for r in self.rows)
+        if self.prefix is not None:
+            return len(self.prefix.state_ids) + sum(len(q) for q in self.prefix.question_ids)
+        return 0
 
 
 def is_cuda_fatal(exc: BaseException) -> bool:
@@ -192,6 +220,41 @@ def plan_rows(
     return groups
 
 
+def plan_prefix_groups(
+    state_lengths: Sequence[int],
+    question_counts: Sequence[int],
+    max_tokens: int,
+    max_rows: int,
+) -> list[list[int]]:
+    """Group multi-question requests into cross-request shared-prefix forwards.
+
+    Groups indices by *equal* state length -- hybrid torsos' recurrent state and Gemma 4's
+    position-based sliding window both require it (padding the prefix would corrupt
+    answers). Within each length-bucket, packs so a group's suffix row count is at most
+    `max_rows` and the prefix forward's padded tokens (len(group) * state_length) is at
+    most `max_tokens`. A single request over the caps still gets a group of one -- the
+    caller falls back to its own `evaluate` if the resulting forward runs out of memory.
+    """
+    assert len(state_lengths) == len(question_counts)
+    by_len: dict[int, list[int]] = {}
+    for i, L_s in enumerate(state_lengths):
+        by_len.setdefault(L_s, []).append(i)
+    groups: list[list[int]] = []
+    for L_s, indices in by_len.items():
+        cur: list[int] = []
+        cur_rows = 0
+        for i in indices:
+            n = question_counts[i]
+            if cur and (cur_rows + n > max_rows or (len(cur) + 1) * L_s > max_tokens):
+                groups.append(cur)
+                cur, cur_rows = [], 0
+            cur.append(i)
+            cur_rows += n
+        if cur:
+            groups.append(cur)
+    return groups
+
+
 class UnforkableCache(TypeError):
     """A KV cache layout `_expand_cache` cannot safely repeat across rows."""
 
@@ -205,17 +268,23 @@ _ROW_STATES = ("keys", "values", "conv_states", "recurrent_states")
 _SHARED_TENSORS = ("_sliding_window_tensor",)
 
 
-def _fork_layered_cache(cache: Any, n: int) -> Any:
-    """`n` copies of a batch-1 cache that keeps one object per layer (transformers 5).
+def _fork_layered_cache(cache: Any, idx: torch.Tensor) -> Any:
+    """Rebatch a layered cache (transformers 5) by selecting rows via `idx`.
+
+    `idx` is a 1-D LongTensor; the output cache has `idx.numel()` rows, and output row j
+    carries input row `idx[j]`. For a batch-1 cache with `idx = [0, 0, ..., 0]` of length
+    n, this is the previous n-way fork. For a batch-B cache with
+    `idx = [0]*n_0 + [1]*n_1 + ... + [B-1]*n_{B-1}`, each input row is repeated by its own
+    count — the layout cross-request shared-prefix batching needs.
 
     Covers sliding-window layers (Gemma 4 E2B: four of every five), whose only extra
-    tensor is the window size, shared by every fork.
+    tensor is the window size, shared by every output row.
 
     Covers hybrid torsos: Qwen3.5 mixes attention layers with Gated DeltaNet layers
     whose recurrent and convolution states must be repeated too, or the suffix forward
     fails on a shape mismatch. The fork gets new layer objects, new dicts and new
     tensors: a DeltaNet layer updates its states and flags (`has_previous_state`) in
-    place, so a fork that shared them would corrupt the prefix it came from. The
+    place, so an output that shared them would corrupt the prefix it came from. The
     approach is decider-2b's (`decider/shared_prefix.py`, Apache-2.0).
 
     Raises UnforkableCache for a layer holding tensors under any other name: we cannot tell
@@ -230,13 +299,13 @@ def _fork_layered_cache(cache: Any, n: int) -> Any:
             is_state = name in _ROW_STATES
             if isinstance(v, torch.Tensor):
                 if name in _SHARED_TENSORS and v.dim() == 0:
-                    continue  # per-layer, not per-row: every fork keeps it as it is
+                    continue  # per-layer, not per-row: every output row keeps it as it is
                 if not is_state:
                     raise UnforkableCache(
                         f"cache layer {type(layer).__name__} holds tensor {name!r}"
                     )
                 if v.numel():
-                    setattr(nl, name, v.expand(n, *v.shape[1:]).contiguous())
+                    setattr(nl, name, v.index_select(0, idx.to(v.device)).contiguous())
             elif isinstance(v, dict):
                 if any(isinstance(t, torch.Tensor) for t in v.values()) and not is_state:
                     raise UnforkableCache(
@@ -246,7 +315,7 @@ def _fork_layered_cache(cache: Any, n: int) -> Any:
                     nl,
                     name,
                     {
-                        k: t.expand(n, *t.shape[1:]).contiguous()
+                        k: t.index_select(0, idx.to(t.device)).contiguous()
                         if isinstance(t, torch.Tensor) and t.numel()
                         else t
                         for k, t in v.items()
@@ -257,15 +326,21 @@ def _fork_layered_cache(cache: Any, n: int) -> Any:
 
 
 def _expand_cache(cache: Any, n: int) -> Any:
-    """Repeat a batch-1 KV cache across `n` rows.
-
-    transformers 5 keeps a per-layer object per layer (`cache.layers`), for plain and
-    hybrid torsos alike; that is the only layout this package admits. `.contiguous()` is
-    not optional: the suffix forward concatenates into these tensors, and an expanded
-    (stride-0) view cannot be written to.
-    """
+    """Repeat a batch-1 KV cache across `n` rows (the single-prefix fork)."""
     if isinstance(getattr(cache, "layers", None), list):
-        return _fork_layered_cache(cache, n)
+        return _fork_layered_cache(cache, torch.zeros(n, dtype=torch.long))
+    raise UnforkableCache(f"unsupported KV cache type: {type(cache)!r}")
+
+
+def _expand_cache_per_row(cache: Any, repeats: Sequence[int]) -> Any:
+    """Repeat each row of a batch-B cache by `repeats[row]` times, packing the copies
+    contiguously in order. `len(repeats)` is the input batch; output batch is
+    `sum(repeats)`. The cross-request shared-prefix forward uses this to turn one
+    prefix forward over several states into one suffix forward over all their
+    questions."""
+    if isinstance(getattr(cache, "layers", None), list):
+        idx = torch.tensor([k for k, r in enumerate(repeats) for _ in range(r)], dtype=torch.long)
+        return _fork_layered_cache(cache, idx)
     raise UnforkableCache(f"unsupported KV cache type: {type(cache)!r}")
 
 
@@ -454,6 +529,76 @@ class SystemOneEngine:
         return out["log_probs"].exp(), int(mask.sum().item())
 
     @torch.inference_mode()  # type: ignore[untyped-decorator]
+    def _shared_prefix_batched(
+        self,
+        prefixes: Sequence[PreparedPrefix],
+        rendered: Sequence[Sequence[RenderedQuestion]],
+    ) -> tuple[torch.Tensor, int]:
+        """Cross-request shared-prefix forward: encode B states together, then every
+        state's question suffixes together.
+
+        All prefixes MUST have `len(state_ids)` equal. Length-bucketing is the caller's
+        responsibility: with different state lengths, (a) Qwen3.5's DeltaNet recurrence
+        absorbs padded tokens with no mask knob to recover, and (b) Gemma 4's sliding
+        window is position-based, so a short state would lose real context past
+        `L_max - window`.
+
+        Returns a [sum_k N_k, K] tensor of probabilities, flat in request order then that
+        request's question order, plus the total real-token count across every forward.
+        """
+        B = len(prefixes)
+        counts = [len(p.question_ids) for p in prefixes]
+        total = sum(counts)
+        L_s = len(prefixes[0].state_ids)
+        assert all(len(p.state_ids) == L_s for p in prefixes), "state lengths must match"
+
+        # One prefix forward over B states.
+        prefix_ids = torch.tensor(
+            [p.state_ids for p in prefixes], dtype=torch.long, device=self.device
+        )
+        prefix_out = self.model.torso(
+            input_ids=prefix_ids,
+            attention_mask=torch.ones_like(prefix_ids),
+            use_cache=True,
+            return_dict=True,
+        )
+        # Rebatch the cache from [B, ...] to [sum N_k, ...], packing each row's forks in order.
+        cache = _expand_cache_per_row(prefix_out.past_key_values, counts)
+
+        # One suffix forward over every question of every state, right-padded.
+        flat_q = [q for p in prefixes for q in p.question_ids]
+        suffix_ids, suffix_mask = self._pad(flat_q)
+        full_mask = torch.cat(
+            [
+                torch.ones(total, L_s, dtype=suffix_mask.dtype, device=self.device),
+                suffix_mask,
+            ],
+            dim=1,
+        )
+        hidden = self.model.encode(
+            input_ids=suffix_ids,
+            attention_mask=full_mask,
+            past_key_values=cache,
+        )
+        pooled = pool_last_token(hidden, full_mask).to(torch.float32)
+
+        # Each row's option positions are suffix-relative (`hidden` is the suffix only), as in
+        # the per-request shared-prefix path.
+        from .modeling import gather_options
+
+        flat_rendered: list[RenderedQuestion] = [rq for rr in rendered for rq in rr]
+        flat_offsets: list[list[tuple[int, int]]] = [o for p in prefixes for o in p.offsets]
+        options = gather_options(hidden, self._option_idx(flat_rendered, 0, flat_offsets))
+        raw = self.model.head(pooled, options.to(torch.float32))
+
+        kinds = [rq.kind for rq in flat_rendered]
+        n_slots = [rq.n_slots for rq in flat_rendered]
+        logits = apply_temperature(raw, self._temperatures(kinds))
+        log_probs = masked_log_softmax(logits, torch.tensor(n_slots, device=self.device))
+        n_tokens = B * L_s + int(suffix_mask.sum().item())
+        return log_probs.exp(), n_tokens
+
+    @torch.inference_mode()  # type: ignore[untyped-decorator]
     def _slot_probs_shared_prefix(
         self,
         s: list[int],
@@ -634,12 +779,26 @@ class SystemOneEngine:
         names, rendered = self._render(request)
         state_text = render_state(request.state)
         chunks = self._chunks(state_text, rendered)
-        if (
-            self.cfg.use_prefix_cache
-            and not self._prefix_cache_unforkable
-            and any(c.stop - c.start > 1 for c, *_ in chunks)
-        ):
-            return PreparedRequest(request, names, rendered, None)  # shared-prefix path
+        multi_q = any(c.stop - c.start > 1 for c, *_ in chunks)
+        if self.cfg.use_prefix_cache and not self._prefix_cache_unforkable and multi_q:
+            # Cross-request shared-prefix batching needs the state tokenised the same way
+            # regardless of which questions share it. With strict_window on, `_fit` encodes
+            # the state once (no front-truncation reserve depends on the questions), so all
+            # chunks give the same state_ids and we can pull a single prefix out of them.
+            # Otherwise the request takes the per-request shared-prefix path alone.
+            if self.cfg.strict_window:
+                flat_q: list[list[int]] = []
+                flat_offsets: list[list[tuple[int, int]]] = []
+                state_ids = chunks[0][1]
+                for _, s, q, offsets in chunks:
+                    assert s == state_ids  # strict_window makes this trivial
+                    flat_q.extend(q)
+                    flat_offsets.extend(offsets)
+                prefix = PreparedPrefix(
+                    state_ids=state_ids, question_ids=flat_q, offsets=flat_offsets
+                )
+                return PreparedRequest(request, names, rendered, None, prefix)
+            return PreparedRequest(request, names, rendered, None)  # shared-prefix path, alone
         pointer = self.model.config.head_type == "pointer"
         rows: list[PreparedRow] = []
         for chunk, s, q, offsets in chunks:
@@ -759,25 +918,116 @@ class SystemOneEngine:
         for j, i in enumerate(group):
             out[i] = probs[j]
 
+    def _run_prefix_group(
+        self,
+        prepared: Sequence[PreparedRequest],
+        indices: Sequence[int],
+        results: list[SystemOneResponse | BaseException | None],
+    ) -> BaseException | None:
+        """Score one length-bucketed group of multi-question requests with one shared
+        prefix forward and one shared suffix forward. On any exception, falls back to
+        running each request in the group alone through `evaluate` (so a single bad
+        row cannot poison the others). Returns a CUDA-fatal exception if one was
+        observed (the caller stops launching more work); otherwise None.
+        """
+        group = [prepared[i] for i in indices]
+        prefixes = [p.prefix for p in group]
+        assert all(pr is not None for pr in prefixes)
+        try:
+            probs, _ = self._shared_prefix_batched(
+                [pr for pr in prefixes if pr is not None],  # type: ignore[list-item]
+                [p.rendered for p in group],
+            )
+        except UnforkableCache as e:
+            print(f"[strands-decider] shared-prefix cache disabled ({e}); falling back")
+            self._prefix_cache_unforkable = True
+            return self._run_prefix_group_alone(prepared, indices, results)
+        except Exception as exc:
+            if is_cuda_fatal(exc):
+                for i in indices:
+                    results[i] = exc
+                return exc
+            return self._run_prefix_group_alone(prepared, indices, results)
+        # Split the flat probs tensor back into each request's answers.
+        start = 0
+        for i, p in zip(indices, group, strict=True):
+            assert p.prefix is not None
+            n = len(p.prefix.question_ids)
+            mine = probs[start : start + n]
+            start += n
+            answers: dict[str, Answer] = {}
+            for name, rq, row in zip(p.names, p.rendered, mine, strict=True):
+                answers[name] = _to_answer(
+                    rq,
+                    row[: rq.n_slots].tolist(),
+                    ordinal_smoothing=self.model.config.ordinal_smoothing,
+                )
+            results[i] = SystemOneResponse(
+                model=self.cfg.model_name,
+                answers=answers,
+                usage=Usage(input_tokens=p.tokens, output_tokens=len(p.names)),
+            )
+        return None
+
+    def _run_prefix_group_alone(
+        self,
+        prepared: Sequence[PreparedRequest],
+        indices: Sequence[int],
+        results: list[SystemOneResponse | BaseException | None],
+    ) -> BaseException | None:
+        """Fallback for a shared-prefix group: each request through `evaluate`. Returns a
+        CUDA-fatal exception if observed."""
+        for i in indices:
+            try:
+                results[i] = self.evaluate(prepared[i].request)
+            except Exception as exc:
+                results[i] = exc
+                if is_cuda_fatal(exc):
+                    return exc
+        return None
+
     def evaluate_prepared(
         self, prepared: Sequence[PreparedRequest]
     ) -> list[SystemOneResponse | BaseException]:
         """Score prepared requests together; one response or exception per request, in order.
 
-        Requests without rows (shared-prefix path, non-batchable engines) run alone through
-        `evaluate`. The rest are scored in forwards planned by `plan_rows`, one at a time,
-        so peak activation memory is that of the largest planned forward.
+        Row-prepared requests go through `plan_rows` and shared row forwards; prefix-prepared
+        requests go through `plan_prefix_groups` and shared prefix+suffix forwards; requests
+        with neither (vision/MLX, or strict_window off) run alone through `evaluate`.
         """
         results: list[SystemOneResponse | BaseException | None] = [None] * len(prepared)
         flat: list[PreparedRow] = []
+        prefix_items: list[int] = []
         for k, p in enumerate(prepared):
-            if p.rows is None:
+            if p.rows is None and p.prefix is None:
                 try:
                     results[k] = self.evaluate(p.request)
                 except Exception as exc:  # returned to the caller
                     results[k] = exc
                 continue
-            flat.extend(p.rows)
+            if p.prefix is not None:
+                prefix_items.append(k)
+                continue
+            flat.extend(p.rows or [])
+        fatal: BaseException | None = None
+        if prefix_items:
+            state_lens: list[int] = []
+            q_counts: list[int] = []
+            for i in prefix_items:
+                pr = prepared[i].prefix
+                assert pr is not None
+                state_lens.append(len(pr.state_ids))
+                q_counts.append(len(pr.question_ids))
+            prefix_groups = plan_prefix_groups(
+                state_lens, q_counts, self.cfg.batch_tokens, self.cfg.batch_rows
+            )
+            for group in prefix_groups:
+                indices = [prefix_items[g] for g in group]
+                if fatal is not None:
+                    for i in indices:
+                        results[i] = fatal
+                    continue
+                fatal = self._run_prefix_group(prepared, indices, results)
         if flat:
             scored: list[Any] = [None] * len(flat)
             groups = plan_rows(
@@ -789,7 +1039,6 @@ class SystemOneEngine:
                 self.cfg.batch_pad_free,
                 self.cfg.batch_rows_by_width,
             )
-            fatal: BaseException | None = None
             for group in groups:
                 if fatal is not None:  # the context is gone; do not launch more work
                     for i in group:

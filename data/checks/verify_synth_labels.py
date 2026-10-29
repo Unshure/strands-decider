@@ -6,6 +6,7 @@ the code does not do -- the corpus teaches the wrong thing and nothing downstrea
 catch it. So this reads the document back as a model would and recomputes independently,
 including a brute-force month adder rather than reusing `_add_months`.
 """
+
 import calendar
 import json
 import re
@@ -33,16 +34,22 @@ def check_units(it):
     limit = float(re.search(r"Permitted mass: (\d+) kg", s).group(1))
     rounding = re.search(r"round the total (\w+) to a whole", s).group(1)
     include = "+ protective wrap" in s
-    comps = re.findall(r"^  (net load|carrier tare|securing gear|protective wrap)\s+([\d.]+) (kg|lb)$",
-                       s, re.M)
+    comps = re.findall(
+        r"^  (net load|carrier tare|securing gear|protective wrap)\s+([\d.]+) (kg|lb)$", s, re.M
+    )
     total = 0.0
     for name, val, unit in comps:
         if name == "protective wrap" and not include:
             continue
         v = float(val)
         total += v * LB if unit == "lb" else v
-    final = (-(-total // 1) if rounding == "up"
-             else total // 1 if rounding == "down" else float(round(total)))
+    final = (
+        -(-total // 1)
+        if rounding == "up"
+        else total // 1
+        if rounding == "down"
+        else float(round(total))
+    )
     want = "true" if final <= limit else "false"
     return it.options[it.label][0] == want, f"total={total:.3f} final={final} limit={limit}"
 
@@ -116,9 +123,13 @@ def check_verify(it):
     return it.options[it.label][0] == want, f"truth={truth} claim={claim_s} dp={dp}"
 
 
-CHECKS = {"syn_units": check_units, "syn_window": check_window,
-          "syn_threshold": check_threshold, "syn_bands": check_bands,
-          "syn_verify": check_verify}
+CHECKS = {
+    "syn_units": check_units,
+    "syn_window": check_window,
+    "syn_threshold": check_threshold,
+    "syn_bands": check_bands,
+    "syn_verify": check_verify,
+}
 
 n = int(sys.argv[1]) if len(sys.argv) > 1 else 2000
 items = G.generate(n, seed=4242)
@@ -139,8 +150,10 @@ for it in items:
 print(f"re-derived {sum(counts.values())} items from their rendered documents\n")
 for t in sorted(counts):
     bad = fails.get(t, [])
-    print(f"  {t:<16} {counts[t]:>5} checked   {len(bad):>4} disagree "
-          f"({len(bad)/counts[t]*100:5.1f}%)")
+    print(
+        f"  {t:<16} {counts[t]:>5} checked   {len(bad):>4} disagree "
+        f"({len(bad) / counts[t] * 100:5.1f}%)"
+    )
 if fails:
     print("\nfirst disagreement per generator:")
     for t, lst in fails.items():

@@ -15,6 +15,7 @@ need, removed at assembly (see `balance`): ShARC's labels follow whether a scena
 a dialogue are present and what the last follow-up answer was, and ConditionalQA is 68%
 "yes".
 """
+
 from __future__ import annotations
 
 import json
@@ -32,11 +33,14 @@ POLICY_OPTIONS = [
     ["depends", "the answer turns on a fact or condition the user has not established"],
     ["not stated", "the text does not answer this question"],
 ]
-POLICY_Q = ("Based only on the text and what the user has said, what is the answer to "
-            'the user\'s question: "{q}"')
+POLICY_Q = (
+    "Based only on the text and what the user has said, what is the answer to "
+    'the user\'s question: "{q}"'
+)
 
 
 # ---- ShARC ------------------------------------------------------------------
+
 
 def sharc_label(answer: str) -> int | None:
     """Yes / No / a follow-up question (the answer depends on something unsaid).
@@ -65,14 +69,25 @@ def sharc(rows: Iterable[dict]) -> Iterator[Example]:
         if r["scenario"].strip():
             parts.append(f"User's situation: {r['scenario'].strip()}")
         if r["history"]:
-            parts.append("Follow-up so far:\n" + "\n".join(
-                f"Q: {h['follow_up_question']}\nA: {h['follow_up_answer']}" for h in r["history"]))
-        yield Example(kind="choice", state="\n\n".join(parts),
-                      instructions=POLICY_Q.format(q=r["question"].strip()),
-                      options=POLICY_OPTIONS[:3], label=label, task="sharc")
+            parts.append(
+                "Follow-up so far:\n"
+                + "\n".join(
+                    f"Q: {h['follow_up_question']}\nA: {h['follow_up_answer']}"
+                    for h in r["history"]
+                )
+            )
+        yield Example(
+            kind="choice",
+            state="\n\n".join(parts),
+            instructions=POLICY_Q.format(q=r["question"].strip()),
+            options=POLICY_OPTIONS[:3],
+            label=label,
+            task="sharc",
+        )
 
 
 # ---- ConditionalQA ----------------------------------------------------------
+
 
 def _plain(html: str) -> str:
     return re.sub(r"<[^>]+>", "", html).strip()
@@ -90,8 +105,9 @@ def conditionalqa_label(q: dict) -> int | None:
     return {frozenset({"yes"}): YES, frozenset({"no"}): NO}.get(frozenset(answers))
 
 
-def conditionalqa(questions: Iterable[dict], documents: Iterable[dict],
-                  budget: int = CHAR_BUDGET) -> Iterator[Example]:
+def conditionalqa(
+    questions: Iterable[dict], documents: Iterable[dict], budget: int = CHAR_BUDGET
+) -> Iterator[Example]:
     docs = {d["url"]: d for d in documents}
     for q in questions:
         label = conditionalqa_label(q)
@@ -105,7 +121,9 @@ def conditionalqa(questions: Iterable[dict], documents: Iterable[dict],
             text += e + "\n"
             pos += len(e) + 1
         # the window keeps the evidence and, for DEPENDS, the conditions the answer turns on
-        want = {_plain(e) for e in q["evidences"]} | {_plain(c) for _, cs in q["answers"] for c in cs}
+        want = {_plain(e) for e in q["evidences"]} | {
+            _plain(c) for _, cs in q["answers"] for c in cs
+        }
         evidence = sorted({elems.index(e) for e in want if e in elems})
         if len(evidence) < len(want):
             continue  # an evidence or condition sentence is not in the page as published
@@ -113,15 +131,22 @@ def conditionalqa(questions: Iterable[dict], documents: Iterable[dict],
         if body is None:
             continue
         state = f"{doc['title']}\n\n{body}\n\nUser's situation: {q['scenario'].strip()}"
-        yield Example(kind="choice", state=state,
-                      instructions=POLICY_Q.format(q=q["question"].strip()),
-                      options=POLICY_OPTIONS, label=label, task="conditionalqa")
+        yield Example(
+            kind="choice",
+            state=state,
+            instructions=POLICY_Q.format(q=q["question"].strip()),
+            options=POLICY_OPTIONS,
+            label=label,
+            task="conditionalqa",
+        )
 
 
 # ---- corpus assembly --------------------------------------------------------
 
-def balance(examples: list[Example], key: Callable[[Example], object], *, min_count: int = 25,
-            seed: int = 0) -> list[Example]:
+
+def balance(
+    examples: list[Example], key: Callable[[Example], object], *, min_count: int = 25, seed: int = 0
+) -> list[Example]:
     """Equal counts of each label within each `key` cell, so the cell predicts nothing.
 
     The per-claim balancing of ContractNLI (`multistep.balance_by_claim`), generalised:
@@ -143,8 +168,9 @@ def balance(examples: list[Example], key: Callable[[Example], object], *, min_co
     return out
 
 
-def cap_per(examples: list[Example], key: Callable[[Example], object], cap: int,
-            seed: int = 0) -> list[Example]:
+def cap_per(
+    examples: list[Example], key: Callable[[Example], object], cap: int, seed: int = 0
+) -> list[Example]:
     """At most `cap` rows per `key` value (ShARC asks one rule up to 234 times)."""
     rng = random.Random(seed)
     by: dict = {}
@@ -191,8 +217,12 @@ def main(argv: list[str] | None = None) -> None:
     documents = load(cq.format("documents"))
 
     # cap first: capping after balancing would undo it
-    sharc_train = cap_per(_sharc_examples(load(sh.format("train"))), lambda e: e._rule,  # type: ignore[attr-defined]
-                          args.sharc_per_rule, seed=args.seed)
+    sharc_train = cap_per(
+        _sharc_examples(load(sh.format("train"))),
+        lambda e: e._rule,  # type: ignore[attr-defined]
+        args.sharc_per_rule,
+        seed=args.seed,
+    )
     sharc_train = balance(sharc_train, lambda e: e._cell, seed=args.seed)  # type: ignore[attr-defined]
     cq_train = list(conditionalqa(load(cq.format("train")), documents))
     # yes and no to equal counts; DEPENDS and NOT_SAID are kept whole (all are rarer)
@@ -200,7 +230,9 @@ def main(argv: list[str] | None = None) -> None:
     no = [e for e in cq_train if e.label == NO]
     rest = [e for e in cq_train if e.label not in (YES, NO)]
     rng = random.Random(args.seed)
-    cq_train = rng.sample(yes, min(len(yes), len(no))) + rng.sample(no, min(len(yes), len(no))) + rest
+    cq_train = (
+        rng.sample(yes, min(len(yes), len(no))) + rng.sample(no, min(len(yes), len(no))) + rest
+    )
 
     train = {"sharc": sharc_train, "conditionalqa": cq_train}
     evals = {  # natural label distributions; ShARC dev and ConditionalQA dev share no rule or page with train

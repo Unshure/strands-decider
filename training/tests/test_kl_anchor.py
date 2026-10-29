@@ -2,6 +2,7 @@
 
 CPU only, with test_ddp.py's tiny Qwen3 torso and test-trained tokenizer.
 """
+
 from __future__ import annotations
 
 import json
@@ -42,11 +43,24 @@ def _train(corpus, out, monkeypatch, **over):
         return REAL_CLIP(params, max_norm, *a, **k)
 
     monkeypatch.setattr(torch.nn.utils, "clip_grad_norm_", clip)
-    base = dict(train_files=[str(corpus / "a.jsonl")], val_files=[str(corpus / "val.jsonl")],
-                base_model="tiny", head_type="pointer", pointer_dim=16, kl_frozen_weight=0.3,
-                head_dropout=0.0, max_length=2048, micro_batch_size=8, grad_accum=4,
-                max_steps=2, group_by_length=True, length_group_mega=2, log_every=1,
-                eval_every=0, output_dir=str(out))
+    base = dict(
+        train_files=[str(corpus / "a.jsonl")],
+        val_files=[str(corpus / "val.jsonl")],
+        base_model="tiny",
+        head_type="pointer",
+        pointer_dim=16,
+        kl_frozen_weight=0.3,
+        head_dropout=0.0,
+        max_length=2048,
+        micro_batch_size=8,
+        grad_accum=4,
+        max_steps=2,
+        group_by_length=True,
+        length_group_mega=2,
+        log_every=1,
+        eval_every=0,
+        output_dir=str(out),
+    )
     T.train(T.TrainConfig(**{**base, **over}))
     with open(out / "history.json", encoding="utf-8") as fh:
         return grads, json.load(fh)
@@ -77,8 +91,13 @@ def test_reference_rows_are_the_checkpoint_own_distribution(corpus):
     for m, idx in enumerate(_batches()):
         b = coll([rows[i] for i in idx])
         with torch.no_grad():
-            lp = ref_model(input_ids=b["input_ids"], attention_mask=b["attention_mask"],
-                           n_slots=b["n_slots"], opt_idx=b["opt_idx"], temperature=1.0)["log_probs"]
+            lp = ref_model(
+                input_ids=b["input_ids"],
+                attention_mask=b["attention_mask"],
+                n_slots=b["n_slots"],
+                opt_idx=b["opt_idx"],
+                temperature=1.0,
+            )["log_probs"]
         for r, n in enumerate(b["n_slots"].tolist()):
             assert torch.equal(ref[m, r, :n], lp[r, :n])
             assert torch.isneginf(ref[m, r, n:]).all()
@@ -103,12 +122,18 @@ def test_reference_with_its_own_tokenizer_sees_the_student_slot_order(corpus):
     for m, idx in enumerate(_batches()):
         s, b = stu_coll([rows[i] for i in idx]), ref_coll([rows[i] for i in idx])
         differ += s["input_ids"].shape != b["input_ids"].shape or not torch.equal(
-            s["input_ids"], b["input_ids"])
+            s["input_ids"], b["input_ids"]
+        )
         for k in ("labels", "n_slots", "teacher", "label_dist"):
             assert torch.equal(s[k], b[k]), (m, k)  # the same permutation of every row
         with torch.no_grad():
-            lp = ref_model(input_ids=b["input_ids"], attention_mask=b["attention_mask"],
-                           n_slots=b["n_slots"], opt_idx=b["opt_idx"], temperature=1.0)["log_probs"]
+            lp = ref_model(
+                input_ids=b["input_ids"],
+                attention_mask=b["attention_mask"],
+                n_slots=b["n_slots"],
+                opt_idx=b["opt_idx"],
+                temperature=1.0,
+            )["log_probs"]
         for r, n in enumerate(b["n_slots"].tolist()):
             assert torch.equal(ref[m, r, :n], lp[r, :n])
             assert torch.isneginf(ref[m, r, n:]).all()
@@ -121,16 +146,21 @@ def test_train_with_a_reference(corpus, tmp_path, monkeypatch, tokenizer):
     ref_model = _tiny(corpus, tokenizer)
     monkeypatch.setattr(StrandsDeciderModel, "load", staticmethod(lambda path, **k: ref_model))
     plain, _ = _train(corpus, tmp_path / "plain", monkeypatch, precompute_frozen_kl=True)
-    grads, history = _train(corpus, tmp_path / "ref", monkeypatch, precompute_frozen_kl=True,
-                            kl_frozen_reference="ref")
+    grads, history = _train(
+        corpus, tmp_path / "ref", monkeypatch, precompute_frozen_kl=True, kl_frozen_reference="ref"
+    )
     assert all(h["kl"] > 0 for h in history if "kl" in h)
-    assert not all(torch.equal(x, y) for p, q in zip(plain, grads, strict=True)
-                   for x, y in zip(p, q, strict=True))
+    assert not all(
+        torch.equal(x, y)
+        for p, q in zip(plain, grads, strict=True)
+        for x, y in zip(p, q, strict=True)
+    )
 
 
 def _same(a, b):
-    return all(torch.equal(x, y) for p, q in zip(a, b, strict=True)
-               for x, y in zip(p, q, strict=True))
+    return all(
+        torch.equal(x, y) for p, q in zip(a, b, strict=True) for x, y in zip(p, q, strict=True)
+    )
 
 
 def _dists(seed):
@@ -149,8 +179,9 @@ def test_forward_kl_is_the_formula_every_run_so_far_used():
     old = (ref.exp().masked_fill(~valid, 0.0) * (ref - stu).masked_fill(~valid, 0.0)).sum(-1)
     assert torch.equal(T._kl(ref, stu, valid, "forward"), old)
     tv = (tea > 0) & torch.isfinite(stu)
-    old_t = (tea.masked_fill(~tv, 0.0)
-             * (tea.clamp_min(1e-12).log() - stu).masked_fill(~tv, 0.0)).sum(-1)
+    old_t = (
+        tea.masked_fill(~tv, 0.0) * (tea.clamp_min(1e-12).log() - stu).masked_fill(~tv, 0.0)
+    ).sum(-1)
     assert torch.equal(T._kl(tea.clamp_min(1e-12).log(), stu, tv, "forward", tea), old_t)
 
 
@@ -162,7 +193,9 @@ def test_reverse_kl_is_student_against_target():
     assert not torch.allclose(T._kl(ref, stu, valid, "forward"), want)
 
 
-def test_reverse_kl_changes_training_and_unknown_direction_is_refused(corpus, tmp_path, monkeypatch):
+def test_reverse_kl_changes_training_and_unknown_direction_is_refused(
+    corpus, tmp_path, monkeypatch
+):
     plain, _ = _train(corpus, tmp_path / "plain", monkeypatch)
     fwd, _ = _train(corpus, tmp_path / "fwd", monkeypatch, kl_direction="forward")
     rev, _ = _train(corpus, tmp_path / "rev", monkeypatch, kl_direction="reverse")

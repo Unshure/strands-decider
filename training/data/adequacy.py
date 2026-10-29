@@ -19,6 +19,7 @@ validation split and training rows only from its train split.
     python -m training.data.adequacy --raw data/raw/helpsteer2 \
         --out data/adequacy_hs2.jsonl --eval-out data/adequacy_hs2_eval.jsonl
 """
+
 from __future__ import annotations
 
 import gzip
@@ -63,13 +64,20 @@ def balanced(rows: list[dict], seed: int = 0) -> list[dict]:
     others = [r for r in good if r["prompt"] not in bad_prompts]
     rng.shuffle(mates)
     rng.shuffle(others)
-    return bad + (mates + others)[:len(bad)]
+    return bad + (mates + others)[: len(bad)]
 
 
 def to_example(r: dict) -> Example:
     state = f"Request:\n{r['prompt'].strip()}\n\nResponse:\n{r['response'].strip()}"
-    return Example(kind="noul", state=state, instructions=QUESTION, options=[list(o) for o in OPTIONS],
-                   label=int(bool(verdict(r))), task=TASK, instruction_variants=list(VARIANTS))
+    return Example(
+        kind="noul",
+        state=state,
+        instructions=QUESTION,
+        options=[list(o) for o in OPTIONS],
+        label=int(bool(verdict(r))),
+        task=TASK,
+        instruction_variants=list(VARIANTS),
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -104,8 +112,10 @@ def main(argv: list[str] | None = None) -> None:
         n = min(len(yes), len(no))
         examples = yes[:n] + no[:n]
         random.Random(args.seed).shuffle(examples)
-        print(f"{name}: {len(examples):,} rows ({n:,} adequate, {n:,} not), "
-              f"{len(prompts[name]):,} distinct prompts")
+        print(
+            f"{name}: {len(examples):,} rows ({n:,} adequate, {n:,} not), "
+            f"{len(prompts[name]):,} distinct prompts"
+        )
         write_jsonl(dst, examples)
     if "train" in prompts:
         print(f"prompts shared by train and eval: {len(prompts['train'] & prompts['eval'])}")

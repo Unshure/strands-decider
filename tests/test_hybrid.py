@@ -5,6 +5,7 @@ as well as keys and values, the engine had to turn the prefix cache off for them
 suffix forward failed on a shape mismatch). tests/test_prefix_cache.py pins the fork
 against full-prompt encoding on a real hybrid cache.
 """
+
 from types import SimpleNamespace
 
 import torch.nn as nn
@@ -29,8 +30,12 @@ def test_is_hybrid_reads_layer_types():
 
 
 def test_engine_keeps_prefix_cache_for_hybrid_torsos():
-    hybrid = SystemOneEngine(_Stub(["linear_attention", "full_attention"]),
-                             EngineConfig(device="cpu", use_prefix_cache=True))
+    hybrid = SystemOneEngine(
+        _Stub(["linear_attention", "full_attention"]),
+        EngineConfig(device="cpu", use_prefix_cache=True),
+    )
     assert hybrid.cfg.use_prefix_cache is True
-    plain = SystemOneEngine(_Stub(["full_attention"]), EngineConfig(device="cpu", use_prefix_cache=True))
+    plain = SystemOneEngine(
+        _Stub(["full_attention"]), EngineConfig(device="cpu", use_prefix_cache=True)
+    )
     assert plain.cfg.use_prefix_cache is True

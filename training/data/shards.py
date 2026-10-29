@@ -6,6 +6,7 @@ the single-process run uses, so every row is computed in the batch it would be i
 and the merged file is the single-process file. `--merge` loads no model: it checks that
 every shard finished and that none overlap, and the script writes `--out` from the rows.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -14,12 +15,23 @@ import os
 
 
 def add_args(ap: argparse.ArgumentParser) -> None:
-    ap.add_argument("--num-shards", type=int, default=1,
-                    help="split the rows over N processes (one per GPU); see --shard-index")
-    ap.add_argument("--shard-index", type=int, default=None,
-                    help="label shard i of --num-shards into <out stem>.shard<i>of<N>.jsonl")
-    ap.add_argument("--merge", action="store_true",
-                    help="combine the --num-shards finished shards into --out (no model)")
+    ap.add_argument(
+        "--num-shards",
+        type=int,
+        default=1,
+        help="split the rows over N processes (one per GPU); see --shard-index",
+    )
+    ap.add_argument(
+        "--shard-index",
+        type=int,
+        default=None,
+        help="label shard i of --num-shards into <out stem>.shard<i>of<N>.jsonl",
+    )
+    ap.add_argument(
+        "--merge",
+        action="store_true",
+        help="combine the --num-shards finished shards into --out (no model)",
+    )
 
 
 def sharded(ap: argparse.ArgumentParser, args: argparse.Namespace) -> bool:

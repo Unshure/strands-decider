@@ -1,4 +1,5 @@
 """The teacher must see exactly the prompt its benchmark score was measured on."""
+
 from __future__ import annotations
 
 import pytest
@@ -6,12 +7,30 @@ import pytest
 from training.data.format import Example
 from training.data.teacher import LETTERS, render, to_row
 
-NOUL = Example(kind="noul", state="WIN a FREE cruise", instructions="Is this spam?",
-               options=[["false", "genuine"], ["true", "promotional"]], label=1, task="spam")
-CHOICE = Example(kind="choice", state="Arsenal won 3-1.", instructions="Which section?",
-                 options=[["World", "international"], ["Sports", ""]], label=1, task="ag_news")
-SCORE = Example(kind="score", state="Great food.", instructions="How positive?",
-                options=[["0", "bad"], ["1", "ok"], ["2", "good"]], label=2, task="yelp")
+NOUL = Example(
+    kind="noul",
+    state="WIN a FREE cruise",
+    instructions="Is this spam?",
+    options=[["false", "genuine"], ["true", "promotional"]],
+    label=1,
+    task="spam",
+)
+CHOICE = Example(
+    kind="choice",
+    state="Arsenal won 3-1.",
+    instructions="Which section?",
+    options=[["World", "international"], ["Sports", ""]],
+    label=1,
+    task="ag_news",
+)
+SCORE = Example(
+    kind="score",
+    state="Great food.",
+    instructions="How positive?",
+    options=[["0", "bad"], ["1", "ok"], ["2", "good"]],
+    label=2,
+    task="yelp",
+)
 
 
 def test_rows_match_the_jevbench_semif_adapter_mapping():
@@ -29,8 +48,13 @@ def test_rows_match_the_jevbench_semif_adapter_mapping():
 
 
 def test_too_many_options_get_no_teacher():
-    many = Example(kind="choice", state="s", instructions="q",
-                   options=[[f"o{i}", ""] for i in range(len(LETTERS) + 1)], label=0)
+    many = Example(
+        kind="choice",
+        state="s",
+        instructions="q",
+        options=[[f"o{i}", ""] for i in range(len(LETTERS) + 1)],
+        label=0,
+    )
     assert to_row(many) is None
 
 
@@ -74,12 +98,23 @@ def test_label_matches_the_models_own_softcapped_head():
 
     torch.manual_seed(0)
     cfg = transformers.Gemma4TextConfig(
-        vocab_size=128, hidden_size=64, intermediate_size=128, num_hidden_layers=2,
-        num_attention_heads=2, num_key_value_heads=1, head_dim=16, global_head_dim=16,
-        hidden_size_per_layer_input=8, vocab_size_per_layer_input=128,
-        layer_types=["sliding_attention", "full_attention"], sliding_window=4,
-        num_kv_shared_layers=0, final_logit_softcapping=2.0, tie_word_embeddings=True,
-        pad_token_id=0)
+        vocab_size=128,
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        head_dim=16,
+        global_head_dim=16,
+        hidden_size_per_layer_input=8,
+        vocab_size_per_layer_input=128,
+        layer_types=["sliding_attention", "full_attention"],
+        sliding_window=4,
+        num_kv_shared_layers=0,
+        final_logit_softcapping=2.0,
+        tie_word_embeddings=True,
+        pad_token_id=0,
+    )
     model = transformers.Gemma4ForCausalLM(cfg).eval()
     tok = _StubTok()
     probs = label(model, tok, [CHOICE], log_every=0)[0]

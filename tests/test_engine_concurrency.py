@@ -6,6 +6,7 @@ engine between `_fit` and `_option_idx` were overwritten by a concurrent request
 and the pointer head read another request's option positions. CPU only: a tiny
 random torso and a byte-level tokenizer.
 """
+
 from __future__ import annotations
 
 import threading
@@ -27,9 +28,14 @@ def _tokenizer():
     tok = Tokenizer(models.BPE())
     tok.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
     tok.decoder = decoders.ByteLevel()
-    tok.train_from_iterator(["<state> <question> <options> <answer> choice"],
-                            trainers.BpeTrainer(vocab_size=300, special_tokens=["<pad>", "<eos>"],
-                                                initial_alphabet=pre_tokenizers.ByteLevel.alphabet()))
+    tok.train_from_iterator(
+        ["<state> <question> <options> <answer> choice"],
+        trainers.BpeTrainer(
+            vocab_size=300,
+            special_tokens=["<pad>", "<eos>"],
+            initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
+        ),
+    )
     return PreTrainedTokenizerFast(tokenizer_object=tok, pad_token="<pad>", eos_token="<eos>")
 
 
@@ -39,11 +45,25 @@ def engine():
 
     torch.manual_seed(0)
     tok = _tokenizer()
-    torso = Qwen3Model(Qwen3Config(vocab_size=len(tok), hidden_size=32, intermediate_size=64,
-                                   num_hidden_layers=2, num_attention_heads=4,
-                                   num_key_value_heads=2, head_dim=8))
-    cfg = StrandsDeciderConfig(base_model="tiny", head_type="pointer", pointer_dim=16,
-                               use_lora=False, torch_dtype="float32", max_length=512)
+    torso = Qwen3Model(
+        Qwen3Config(
+            vocab_size=len(tok),
+            hidden_size=32,
+            intermediate_size=64,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            head_dim=8,
+        )
+    )
+    cfg = StrandsDeciderConfig(
+        base_model="tiny",
+        head_type="pointer",
+        pointer_dim=16,
+        use_lora=False,
+        torch_dtype="float32",
+        max_length=512,
+    )
     model = StrandsDeciderModel(cfg, torso, tok)
     return SystemOneEngine(model, EngineConfig(device="cpu"))
 
@@ -53,10 +73,18 @@ def _one_question_requests():
     out = []
     for i in range(24):
         opts = [f"option{k}" + "x" * ((i * 7 + k * 3) % 11) for k in range(2 + i % 4)]
-        out.append(SystemOneRequest(
-            state="s" * (5 + (i * 13) % 40),
-            questions={"q": ChoiceQuestion(type="choice", instructions="pick " * (1 + i % 5),
-                                           criteria={o: "" for o in opts})}))
+        out.append(
+            SystemOneRequest(
+                state="s" * (5 + (i * 13) % 40),
+                questions={
+                    "q": ChoiceQuestion(
+                        type="choice",
+                        instructions="pick " * (1 + i % 5),
+                        criteria={o: "" for o in opts},
+                    )
+                },
+            )
+        )
     return out
 
 
@@ -67,9 +95,11 @@ def _multi_question_requests():
         qs = {}
         for j in range(3):
             opts = [f"opt{k}" + "y" * ((i * 5 + j * 2 + k) % 9) for k in range(2 + (i + j) % 3)]
-            qs[f"q{j}"] = ChoiceQuestion(type="choice",
-                                         instructions="pick " * (1 + (i + j) % 4),
-                                         criteria={o: "" for o in opts})
+            qs[f"q{j}"] = ChoiceQuestion(
+                type="choice",
+                instructions="pick " * (1 + (i + j) % 4),
+                criteria={o: "" for o in opts},
+            )
         out.append(SystemOneRequest(state="s" * (5 + (i * 11) % 30), questions=qs))
     return out
 

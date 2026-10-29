@@ -26,9 +26,11 @@ from __future__ import annotations
 import json
 import os
 import threading
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import mlx.core as mx
 import torch
@@ -55,6 +57,8 @@ from .schema import SystemOneRequest, SystemOneResponse
 # a 48 GB M4 Pro), and a new request shape allocates new ones. 1 GiB holds a 2B torso's
 # working set; it cost no latency on the M4 Pro and kept the process near its weights' size.
 DEFAULT_CACHE_LIMIT = 1 << 30
+
+T = TypeVar("T")
 
 _DTYPES = {"bfloat16": mx.bfloat16, "float16": mx.float16, "float32": mx.float32}
 # mlx-lm names the text-only Qwen3.5 checkpoint's type after the multimodal one, whose module
@@ -83,11 +87,17 @@ def merge_lora(lm: Any, adapter_dir: str, prefix: str) -> int:
     """
     with open(os.path.join(adapter_dir, "adapter_config.json"), encoding="utf-8") as fh:
         cfg = json.load(fh)
-    unsupported = [key for key in ("fan_in_fan_out", "rank_pattern", "alpha_pattern") if cfg.get(key)]
+    unsupported = [
+        key for key in ("fan_in_fan_out", "rank_pattern", "alpha_pattern") if cfg.get(key)
+    ]
     if unsupported:
-        raise ValueError(f"{adapter_dir}: the MLX backend cannot merge an adapter with {unsupported}")
+        raise ValueError(
+            f"{adapter_dir}: the MLX backend cannot merge an adapter with {unsupported}"
+        )
     adapter = mx.load(os.path.join(adapter_dir, "adapter_model.safetensors"))
-    stems = {name.removesuffix(".lora_A.weight") for name in adapter if name.endswith(".lora_A.weight")}
+    stems = {
+        name.removesuffix(".lora_A.weight") for name in adapter if name.endswith(".lora_A.weight")
+    }
     expected = {stem + suffix for stem in stems for suffix in (".lora_A.weight", ".lora_B.weight")}
     if set(adapter) != expected:
         unknown = sorted(set(adapter) - expected) + sorted(expected - set(adapter))
@@ -107,8 +117,13 @@ def merge_lora(lm: Any, adapter_dir: str, prefix: str) -> int:
             if base is None:
                 raise ValueError(f"adapter tensor {stem} has no weight {target} in the MLX torso")
             if not mx.issubdtype(base.dtype, mx.floating):
-                raise ValueError(f"{target} is {base.dtype}; the MLX backend cannot merge into quantised weights")
-            lora_a, lora_b = adapter.pop(stem + ".lora_A.weight"), adapter.pop(stem + ".lora_B.weight")
+                raise ValueError(
+                    f"{target} is {base.dtype}; the MLX backend cannot merge into quantised weights"
+                )
+            lora_a, lora_b = (
+                adapter.pop(stem + ".lora_A.weight"),
+                adapter.pop(stem + ".lora_B.weight"),
+            )
             delta = lora_b.astype(mx.float32) @ lora_a.astype(mx.float32)
             weight = (base.astype(mx.float32) + scale * delta).astype(base.dtype)
             mx.eval(weight)
@@ -121,7 +136,14 @@ def merge_lora(lm: Any, adapter_dir: str, prefix: str) -> int:
 class MLXEngine(SystemOneEngine):
     """`SystemOneEngine` with the torso forward on MLX. Build one with `load_mlx_engine`."""
 
-    def __init__(self, decoder: Any, cache_owner: Any, readout: _Readout, config: EngineConfig) -> None:
+    def __init__(
+        self,
+        decoder: Any,
+        cache_owner: Any,
+        readout: _Readout,
+        config: EngineConfig,
+        executor: ThreadPoolExecutor,
+    ) -> None:
         # Not super().__init__(): that moves a torch torso to a torch device. These are the
         # attributes the inherited helpers read; `device` is where their small index and
         # temperature tensors live, next to the head.
@@ -131,15 +153,23 @@ class MLXEngine(SystemOneEngine):
         self.device = "cpu"
         self._decoder = decoder
         self._cache_owner = cache_owner
-        # One evaluation at a time: mlx-lm's lazy arrays belong to the thread that
-        # produced them, and the server runs requests on its thread pool.
-        self._lock = threading.Lock()
+        # One evaluation at a time, pinned to the loading thread: mlx-lm's lazy arrays and
+        # Metal streams belong to the thread that produced them, and FastAPI runs sync
+        # handlers on its thread pool. A single-worker executor guarantees affinity and
+        # replaces the explicit lock.
+        self._executor = executor
         self._prefix_cache_unforkable = False
         self._tok_lock = threading.Lock()
 
     def evaluate(self, request: SystemOneRequest) -> SystemOneResponse:
-        with self._lock:
-            return super().evaluate(request)
+        return self._run(super().evaluate, request)
+
+    def _run(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        return self._executor.submit(fn, *args, **kwargs).result()
+
+    def close(self) -> None:
+        """Shut down the MLX worker thread. After this the engine cannot evaluate."""
+        self._executor.shutdown(wait=True)
 
     def _hidden(self, rows: list[list[int]], cache: list[Any] | None = None) -> Any:
         """Last hidden states [N, L, d] of right-padded rows. Both layer kinds are causal, so
@@ -151,8 +181,14 @@ class MLXEngine(SystemOneEngine):
         mx.eval(hidden)
         return hidden
 
-    def _probs(self, hidden: Any, last: list[int], opt_idx: torch.Tensor | None,
-               n_slots: list[int], kinds: list[str]) -> torch.Tensor:
+    def _probs(
+        self,
+        hidden: Any,
+        last: list[int],
+        opt_idx: torch.Tensor | None,
+        n_slots: list[int],
+        kinds: list[str],
+    ) -> torch.Tensor:
         """Read the head's inputs out of `hidden` on Metal, then score them on torch.
 
         Row i is pooled at `last[i]`; a pointer head also reads `opt_idx[i]`, where padding
@@ -175,7 +211,9 @@ class MLXEngine(SystemOneEngine):
             return masked_log_softmax(logits, torch.tensor(n_slots)).exp()
 
     def _option_positions(
-        self, rendered: list[RenderedQuestion] | None, base: int,
+        self,
+        rendered: list[RenderedQuestion] | None,
+        base: int,
         offsets: list[list[tuple[int, int]]],
     ) -> torch.Tensor | None:
         if self.model.config.head_type != "pointer":
@@ -184,18 +222,31 @@ class MLXEngine(SystemOneEngine):
         return self._option_idx(rendered, base, offsets)
 
     def _slot_probs_batched(
-        self, state: list[int], questions: list[list[int]], n_slots: list[int], kinds: list[str],
+        self,
+        state: list[int],
+        questions: list[list[int]],
+        n_slots: list[int],
+        kinds: list[str],
         offsets: list[list[tuple[int, int]]],
         rendered: list[RenderedQuestion] | None = None,
     ) -> tuple[torch.Tensor, int]:
         rows = [state + question for question in questions]
         hidden = self._hidden(rows)
-        probs = self._probs(hidden, [len(row) - 1 for row in rows],
-                            self._option_positions(rendered, len(state), offsets), n_slots, kinds)
+        probs = self._probs(
+            hidden,
+            [len(row) - 1 for row in rows],
+            self._option_positions(rendered, len(state), offsets),
+            n_slots,
+            kinds,
+        )
         return probs, sum(len(row) for row in rows)
 
     def _slot_probs_shared_prefix(
-        self, state: list[int], questions: list[list[int]], n_slots: list[int], kinds: list[str],
+        self,
+        state: list[int],
+        questions: list[list[int]],
+        n_slots: list[int],
+        kinds: list[str],
         offsets: list[list[tuple[int, int]]],
         rendered: list[RenderedQuestion] | None = None,
     ) -> tuple[torch.Tensor, int]:
@@ -204,8 +255,13 @@ class MLXEngine(SystemOneEngine):
         # `merge` copies each layer's state into a batch of len(questions); `prefix` is untouched.
         batch = [type(layer).merge([layer] * len(questions)) for layer in prefix]
         hidden = self._hidden(questions, batch)
-        probs = self._probs(hidden, [len(question) - 1 for question in questions],
-                            self._option_positions(rendered, 0, offsets), n_slots, kinds)
+        probs = self._probs(
+            hidden,
+            [len(question) - 1 for question in questions],
+            self._option_positions(rendered, 0, offsets),
+            n_slots,
+            kinds,
+        )
         return probs, len(state) + sum(len(question) for question in questions)
 
 
@@ -228,8 +284,11 @@ def _load_torso(base: Path, dtype: str) -> tuple[Any, Any, Any, str]:
     # The checkpoint's dtype, as torch loads it; mlx-lm's predicate keeps e.g. A_log in fp32.
     keep = getattr(owner, "cast_predicate", None) or (lambda _path: True)
     target = _DTYPES[dtype]
-    cast = [(path, value.astype(target)) for path, value in tree_flatten(lm.parameters())
-            if mx.issubdtype(value.dtype, mx.floating) and value.dtype != target and keep(path)]
+    cast = [
+        (path, value.astype(target))
+        for path, value in tree_flatten(lm.parameters())
+        if mx.issubdtype(value.dtype, mx.floating) and value.dtype != target and keep(path)
+    ]
     if cast:
         lm.load_weights(cast, strict=False)
     # Evaluate the casts now: a lazy array belongs to this thread's stream, and the server
@@ -248,7 +307,29 @@ def load_mlx_engine(
 
     `config` is the torch engine's `EngineConfig`, with its device set to "mlx".
     `cache_limit_bytes` sets MLX's process-wide buffer cache limit; None leaves it as it is.
+
+    The MLX torso is loaded on, and every evaluation runs on, a dedicated worker thread the
+    returned engine owns. mlx-lm's lazy arrays and Metal streams are thread-local, and
+    Gemma4 keeps state tied to the loading thread's GPU stream; FastAPI serves sync handlers
+    from its thread pool, so without this pinning the first request from a worker thread
+    fails with "no Stream(gpu, 1) in current thread".
     """
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mlx-engine")
+    try:
+        return executor.submit(
+            _load_mlx_engine_on_worker, checkpoint, config, cache_limit_bytes, executor
+        ).result()
+    except BaseException:
+        executor.shutdown(wait=True)
+        raise
+
+
+def _load_mlx_engine_on_worker(
+    checkpoint: str,
+    config: EngineConfig | None,
+    cache_limit_bytes: int | None,
+    executor: ThreadPoolExecutor,
+) -> MLXEngine:
     path = checkpoint_dir(checkpoint)
     decider_config = StrandsDeciderConfig.from_json(config_path(path))
     decider_config.base_revision = base_revision(path, decider_config)
@@ -275,4 +356,6 @@ def load_mlx_engine(
     head.load_state_dict(head_state)
     head.to(torch.float32).eval()
     engine_config = replace(config or EngineConfig(), device="mlx")
-    return MLXEngine(decoder, owner, _Readout(decider_config, tokenizer, head), engine_config)
+    return MLXEngine(
+        decoder, owner, _Readout(decider_config, tokenizer, head), engine_config, executor
+    )

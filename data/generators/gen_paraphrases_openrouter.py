@@ -28,6 +28,7 @@ Usage:
     export AWS_BEARER_TOKEN_BEDROCK=...
     python gen_paraphrases_openrouter.py --backend bedrock --region us-west-2 --out gen_paraphrases_bedrock --limit 16
 """
+
 from __future__ import annotations
 
 import argparse
@@ -99,15 +100,26 @@ def describe(q: dict) -> str:
 
 
 def write_batch(args, batch: list[tuple[int, dict]]) -> list[dict]:
-    items = "\n\n".join(f"id {i} ({'yes/no' if q['kind'] == 'noul' else 'choice'}): {q['question']}\n{describe(q)}"
-                        for i, q in batch)
+    items = "\n\n".join(
+        f"id {i} ({'yes/no' if q['kind'] == 'noul' else 'choice'}): {q['question']}\n{describe(q)}"
+        for i, q in batch
+    )
     wargs = argparse.Namespace(**{**vars(args), "reasoning_effort": args.writer_reasoning})
     for attempt in range(3):
         try:
-            text, provider = gd.chat(wargs, args.writer, SYSTEM_WRITER, WRITER_PROMPT.format(items=items),
-                                     args.writer_max_tokens, args.writer_temperature)
-            got = {int(r["id"]): r.get("paraphrases") or [] for r in gd.parse_json(text).get("rewrites", [])
-                   if isinstance(r, dict) and "id" in r}
+            text, provider = gd.chat(
+                wargs,
+                args.writer,
+                SYSTEM_WRITER,
+                WRITER_PROMPT.format(items=items),
+                args.writer_max_tokens,
+                args.writer_temperature,
+            )
+            got = {
+                int(r["id"]): r.get("paraphrases") or []
+                for r in gd.parse_json(text).get("rewrites", [])
+                if isinstance(r, dict) and "id" in r
+            }
             break
         except (ValueError, json.JSONDecodeError):
             if attempt == 2:
@@ -117,8 +129,18 @@ def write_batch(args, batch: list[tuple[int, dict]]) -> list[dict]:
         ps = [p.strip() for p in got.get(i, []) if isinstance(p, str) and p.strip()]
         ps = [p for p in dict.fromkeys(ps) if p != q["question"]][:3]
         if ps:
-            out.append({"id": i, "question": q["question"], "kind": q["kind"], "options": q["options"],
-                        "candidates": ps, "backend": args.backend, "writer": args.writer, "provider": provider})
+            out.append(
+                {
+                    "id": i,
+                    "question": q["question"],
+                    "kind": q["kind"],
+                    "options": q["options"],
+                    "candidates": ps,
+                    "backend": args.backend,
+                    "writer": args.writer,
+                    "provider": provider,
+                }
+            )
     return out
 
 
@@ -126,19 +148,37 @@ def check_batch(args, rows: list[dict]) -> list[dict]:
     blocks = "\n\n".join(
         f"Q{j + 1} ORIGINAL ({'yes/no' if r['kind'] == 'noul' else 'choice'}): {r['question']}\n{describe(r)}\n"
         + "\n".join(f"Q{j + 1} R{k + 1}: {p}" for k, p in enumerate(r["candidates"]))
-        for j, r in enumerate(rows))
-    text, provider = gd.chat(args, args.checker, SYSTEM_CHECK, CHECK_PROMPT.format(blocks=blocks),
-                             args.check_max_tokens, 0.3)
-    verdict = {(int(q), int(k)): v.upper() for q, k, v in
-               re.findall(r"Q(\d+)\s*R(\d+)\s*:\s*\**\s*(SAME|DIFFERENT)", text, re.I)}
+        for j, r in enumerate(rows)
+    )
+    text, provider = gd.chat(
+        args,
+        args.checker,
+        SYSTEM_CHECK,
+        CHECK_PROMPT.format(blocks=blocks),
+        args.check_max_tokens,
+        0.3,
+    )
+    verdict = {
+        (int(q), int(k)): v.upper()
+        for q, k, v in re.findall(r"Q(\d+)\s*R(\d+)\s*:\s*\**\s*(SAME|DIFFERENT)", text, re.I)
+    }
     out = []
     for j, r in enumerate(rows):
         v = [verdict.get((j + 1, k + 1)) for k in range(len(r["candidates"]))]
         if all(x is None for x in v):
             continue  # unparsed: left for a rerun rather than recorded as rejected
-        out.append({"question": r["question"], "paraphrases": [p for p, x in zip(r["candidates"], v, strict=False) if x == "SAME"],
-                    "candidates": r["candidates"], "verdicts": v, "backend": args.backend,
-                    "writer": r.get("writer"), "checker": args.checker, "provider": provider})
+        out.append(
+            {
+                "question": r["question"],
+                "paraphrases": [p for p, x in zip(r["candidates"], v, strict=False) if x == "SAME"],
+                "candidates": r["candidates"],
+                "verdicts": v,
+                "backend": args.backend,
+                "writer": r.get("writer"),
+                "checker": args.checker,
+                "provider": provider,
+            }
+        )
     return out
 
 
@@ -146,7 +186,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--out", default="gen_paraphrases")
     ap.add_argument("--limit", type=int, default=0, help="first N questions only (pilot)")
-    ap.add_argument("--writer", default=None, help="default: the backend's (llm_client.DEFAULT_MODELS)")
+    ap.add_argument(
+        "--writer", default=None, help="default: the backend's (llm_client.DEFAULT_MODELS)"
+    )
     ap.add_argument("--checker", default=None, help="default: the backend's verifier")
     ap.add_argument("--reasoning-effort", default="low", choices=["low", "medium", "high", "none"])
     ap.add_argument("--writer-reasoning", default="none", choices=["low", "medium", "high", "none"])
@@ -156,9 +198,15 @@ def main() -> None:
     ap.add_argument("--max-cost", type=float, default=float("inf"))
     ap.add_argument("--timeout", type=float, default=600)
     ap.add_argument("--writer-temperature", type=float, default=0.8)
-    ap.add_argument("--writer-max-tokens", type=int, default=None,
-                    help="default: the model's cap in llm_client.MODELS, else 16000")
-    ap.add_argument("--check-max-tokens", type=int, default=None, help="as --writer-max-tokens, else 16000")
+    ap.add_argument(
+        "--writer-max-tokens",
+        type=int,
+        default=None,
+        help="default: the model's cap in llm_client.MODELS, else 16000",
+    )
+    ap.add_argument(
+        "--check-max-tokens", type=int, default=None, help="as --writer-max-tokens, else 16000"
+    )
     llm.add_args(ap)
     args = ap.parse_args()
     args.writer = args.writer or llm.default_model(args, "writer")
@@ -170,7 +218,11 @@ def main() -> None:
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    cand_path, done_path, fail_path = out / "candidates.jsonl", out / "paraphrases.jsonl", out / "failures.jsonl"
+    cand_path, done_path, fail_path = (
+        out / "candidates.jsonl",
+        out / "paraphrases.jsonl",
+        out / "failures.jsonl",
+    )
     lock = threading.Lock()
 
     def append(path: Path, row: dict) -> None:
@@ -180,14 +232,17 @@ def main() -> None:
     t0 = time.time()
     qs = questions()
     if args.limit:
-        qs = qs[:args.limit]
+        qs = qs[: args.limit]
     have_cand = {r["question"]: r for r in gd.read_jsonl(cand_path)}
     have_done = {r["question"] for r in gd.read_jsonl(done_path)}
     todo = [(i, q) for i, q in enumerate(qs) if q["question"] not in have_cand]
-    batches = [todo[k:k + PER_CALL] for k in range(0, len(todo), PER_CALL)]
+    batches = [todo[k : k + PER_CALL] for k in range(0, len(todo), PER_CALL)]
     checks = [r for r in have_cand.values() if r["question"] not in have_done]
-    print(f"{len(qs)} distinct questions; {len(batches)} writer calls and {len(checks)} checks queued; "
-          f"up to ${args.max_cost:.2f}", flush=True)
+    print(
+        f"{len(qs)} distinct questions; {len(batches)} writer calls and {len(checks)} checks queued; "
+        f"up to ${args.max_cost:.2f}",
+        flush=True,
+    )
     n = 0
     with ThreadPoolExecutor(args.workers) as ex:
         running: dict = {}
@@ -216,20 +271,35 @@ def main() -> None:
                         for r in res:
                             append(done_path, r)
                 except Exception as e:
-                    append(fail_path, {"stage": kind, "error": repr(e)[:1500],
-                                       "question": (job[0][1]["question"] if kind == "w" else job[0]["question"])[:200]})
+                    append(
+                        fail_path,
+                        {
+                            "stage": kind,
+                            "error": repr(e)[:1500],
+                            "question": (
+                                job[0][1]["question"] if kind == "w" else job[0]["question"]
+                            )[:200],
+                        },
+                    )
                 n += 1
                 if n % 50 == 0:
-                    print(f"  {n} calls done, {len(batches)} + {len(checks)} queued, ${gd.USAGE['cost']:.2f}, "
-                          f"{time.time() - t0:.0f} s", flush=True)
+                    print(
+                        f"  {n} calls done, {len(batches)} + {len(checks)} queued, ${gd.USAGE['cost']:.2f}, "
+                        f"{time.time() - t0:.0f} s",
+                        flush=True,
+                    )
 
     done = gd.read_jsonl(done_path)
     kept = sum(len(r["paraphrases"]) for r in done)
     cands = sum(len(r["candidates"]) for r in done)
     with_any = sum(1 for r in done if r["paraphrases"])
-    print(f"checked {len(done)} questions: {kept} of {cands} paraphrases judged SAME ({kept / max(cands, 1):.0%}); "
-          f"{with_any} questions have at least one")
-    print(f"this run: {gd.USAGE['calls']} calls, ${gd.USAGE['cost']:.2f} {llm.cost_note(args)}, {time.time() - t0:.0f} s")
+    print(
+        f"checked {len(done)} questions: {kept} of {cands} paraphrases judged SAME ({kept / max(cands, 1):.0%}); "
+        f"{with_any} questions have at least one"
+    )
+    print(
+        f"this run: {gd.USAGE['calls']} calls, ${gd.USAGE['cost']:.2f} {llm.cost_note(args)}, {time.time() - t0:.0f} s"
+    )
 
 
 if __name__ == "__main__":

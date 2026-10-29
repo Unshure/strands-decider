@@ -22,8 +22,9 @@ commands are written for WSL2; on native Linux, skip the `wsl.exe` line and the 
 - [`aws/`](aws/README.md): one EC2 host over SSM, and the measured stage timings.
 - [`AGENTS.md`](AGENTS.md): runbooks for a coding agent that runs, operates or verifies training.
 - [`recipe_v7.sh`](recipe_v7.sh) and [`legacy-v7.md`](legacy-v7.md): the v7 route on Windows.
-- [`../configs/`](../configs/): `train.yaml`, its parent `train-parent.yaml`, and
-  `experiments/` for the preregistered runs.
+- [`../configs/`](../configs/): `train.yaml`, its parent `train-parent.yaml`,
+  `experiments/` for the preregistered runs, and `v1/` for the v1 releases
+  ([The v1 release recipes](#the-v1-release-recipes)).
 - [`../data/README.md`](../data/README.md): what the recipe downloads, and what is committed.
 
 Evaluation is in [evaluation/README.md](../evaluation/README.md), serving in
@@ -198,6 +199,59 @@ H100 with the real torso, bf16, dropout off, 40 steps at 8 GPUs track 1 GPU step
 micro-batch across ranks changes bf16 rounding by 1e-2 to 4e-2 of the gradient; dropout,
 as shipped, changes it by 0.44.
 
+### Fine-tuning a released model with `init_from`
+
+`init_from: <checkpoint>` starts training from a trained checkpoint instead of the base
+model, and trains it on your rows. The checkpoint is a Hub id or a local directory. Its
+LoRA adapter and its head, pointer or slot, start from their trained values, and both
+train. The torso is not frozen, and `gradient_checkpointing` applies as usual. It works
+under `torchrun` as a run from the base model does.
+
+```yaml
+init_from: "StrandsAgents/strands-decider-E4B-gemma4-v1-2610"
+train_files: ["data/my_rows.jsonl"]
+val_fraction: 0.05
+group_by_length: true
+# Keep the answers close to the released model's own:
+kl_frozen_weight: 0.3
+kl_frozen_reference: "StrandsAgents/strands-decider-E4B-gemma4-v1-2610"
+precompute_frozen_kl: true
+output_dir: "checkpoints/my-e4b"
+```
+
+```bash
+python -m training.train --config my-finetune.yaml
+python -m training.evaluate calibrate checkpoints/my-e4b --data <held-out rows>
+```
+
+- **The checkpoint fixes the architecture.** `base_model`, `num_slots`, `head_type`,
+  `pointer_dim`, `head_hidden`, `use_lora`, `lora_r`, `lora_alpha`, `lora_targets` and
+  `force_bos` come from the checkpoint's `strands_decider_config.json`. Leave them out of
+  the config. A config that sets one of them to another value stops before the model loads,
+  with one error that names every such key. A key in the YAML file counts as set even at its
+  default value, so a copy of `configs/train.yaml` (`lora_r: 16`) stops on a released soup.
+  `max_length` is the checkpoint's unless the config sets it. Everything else (data,
+  learning rates, epochs, `head_dropout`, `ordinal_smoothing`, the KL terms) is the
+  config's, and is saved with the result. `head_lr` defaults to 1e-3, a value chosen for a
+  randomly initialised head; here the head is already trained.
+- **Released models are soups** ([Seeds and soups](steps.md#seeds-and-soups)): a rank-N·r
+  adapter and a pointer head with `pointer_dim` N·d. They load and train as any checkpoint.
+- **Temperatures** are reset to 1 at the start, as for a soup: calibrate the result before
+  you evaluate or serve it.
+- **The frozen-KL anchor.** With `kl_frozen_reference` set to the `init_from` checkpoint,
+  the KL term starts near 0 (exactly 0 with dropout off) and keeps the fine-tune close to
+  the released model's answers.
+  Without `kl_frozen_reference`, the anchor is the base torso's own option-number readout,
+  with the adapter disabled, as in a run from the base model.
+- **The result is a normal checkpoint**: `strands-decider serve` and `ask`,
+  `python -m training.evaluate` and `training.soup` read it. To soup fine-tunes, train
+  several seeds with one config (the same `init_from` and settings, other `seed` values):
+  `soup` refuses checkpoints whose configs differ in more than their temperatures. The soup
+  of N fine-tunes of a rank-R checkpoint has rank N·R: three seeds on a rank-48
+  soup give a rank-144 adapter.
+- `freeze_torso: true` trains the head alone, on the checkpoint's frozen adapter.
+  `head_init` must stay `random`: the trained head is kept.
+
 ## Usage
 
 `training/recipe.sh` builds, trains and evaluates the default, v19, end to end under WSL2; pass
@@ -234,3 +288,29 @@ The steps, each with its command, are in [steps.md](steps.md):
 [2. Label with the teacher](steps.md#2-label-with-the-teacher), [3. Train](steps.md#3-train),
 [4. Calibrate](steps.md#4-calibrate), [5. Evaluate](steps.md#5-evaluate) and
 [6. Serve](steps.md#6-serve).
+
+## The v1 release recipes
+
+`configs/v1/` holds one config for each released v1 model: the seed-0 config of its
+training run, with only `output_dir` and the comments changed. Each release is a soup of
+three runs of that config, seeds 0, 1 and 2, which differ only in `seed`. The soup was
+calibrated afterwards. The header of each config lists its inputs, their sha256, and the
+rerun commands: `recipe.sh train` once per seed, then `python -m training.soup` and
+`python -m training.evaluate calibrate`. All five configs keep the answers close to the
+released v19 (`kl_frozen_reference: checkpoints/v19-ref`); `hf download
+StrandsAgents/strands-decider-2B-hobson-v19 --local-dir checkpoints/v19-ref` gets it.
+
+| release | config | base model | data | teacher | to rerun it |
+| --- | --- | --- | --- | --- | --- |
+| `strands-decider-2B-qwen3.5-v1-2610` | `configs/v1/strands-decider-2B-qwen3.5-v1-2610.yaml` | `Qwen/Qwen3.5-2B-Base` | the v1 mix, 246,678 rows | gemma-4-31B-it (`data/teacher_g28.jsonl`) | the four mix files that are not v21's (`train_v5_nc`, `code_g28`, `gapfill_g28`, `rule_apply_g28`) and the teacher file: none is in this repository or built by it |
+| `strands-decider-E2B-gemma4-v1-2610` | `configs/v1/strands-decider-E2B-gemma4-v1-2610.yaml` | `google/gemma-4-E2B-it` | v21's data plus code tasks, 135,602 rows | Qwen3.5-4B (`data/teacher_v20.jsonl`, from `recipe.sh distill`) | the code-task rows, `data/code_v27.jsonl`, which are built outside this repository |
+| `strands-decider-E4B-gemma4-v1-2610` | `configs/v1/strands-decider-E4B-gemma4-v1-2610.yaml` | `google/gemma-4-E4B-it` | the same | the same | the same |
+| `strands-decider-12B-gemma4-v1-2610` | `configs/v1/strands-decider-12B-gemma4-v1-2610.yaml` | `google/gemma-4-12B-it` | the same | the same | the same |
+| `strands-decider-26B-A4B-gemma4-v1-2610` | `configs/v1/strands-decider-26B-A4B-gemma4-v1-2610.yaml` | `google/gemma-4-26B-A4B-it` | the same | the same | the same |
+
+Everything else the five configs read is built by `training/recipe.sh` (`build`, `fetch`,
+`multistep`, `generated`, `adequacy`, `distill`). The config headers and `data/SHA256SUMS` give the sha256 of
+each file the runs read, so a rebuild can be checked against them. The runs used the code of the development repository, not this repository's `main`; the settings
+they use are on `main` (`kl_frozen_reference`, the Gemma 4 torsos and the soup). The
+four Gemma 4 configs differ only in `base_model` and `output_dir`
+(`training/tests/test_configs.py`).

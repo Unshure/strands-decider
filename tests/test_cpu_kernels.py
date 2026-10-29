@@ -78,16 +78,29 @@ def _tiny_checkpoint(tmp_path):
     vocab = {w: i for i, w in enumerate(["<pad>", "<eos>", "<unk>", "a", "b", "c"])}
     tok = Tokenizer(models.WordLevel(vocab, unk_token="<unk>"))
     tok.pre_tokenizer = pre_tokenizers.Whitespace()
-    tok = PreTrainedTokenizerFast(tokenizer_object=tok, pad_token="<pad>", eos_token="<eos>",
-                                  unk_token="<unk>")
+    tok = PreTrainedTokenizerFast(
+        tokenizer_object=tok, pad_token="<pad>", eos_token="<eos>", unk_token="<unk>"
+    )
     base = tmp_path / "base"
-    Qwen3_5ForCausalLM(Qwen3_5TextConfig(
-        vocab_size=len(tok), hidden_size=32, intermediate_size=64, num_hidden_layers=4,
-        num_attention_heads=2, num_key_value_heads=1, head_dim=16, linear_num_key_heads=2,
-        linear_num_value_heads=2, linear_key_head_dim=8, linear_value_head_dim=8,
-        layer_types=["linear_attention"] * 3 + ["full_attention"])).save_pretrained(base)
-    cfg = StrandsDeciderConfig(base_model=str(base), head_type="pointer", pointer_dim=8,
-                               torch_dtype="float32", lora_r=2)
+    Qwen3_5ForCausalLM(
+        Qwen3_5TextConfig(
+            vocab_size=len(tok),
+            hidden_size=32,
+            intermediate_size=64,
+            num_hidden_layers=4,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            head_dim=16,
+            linear_num_key_heads=2,
+            linear_num_value_heads=2,
+            linear_key_head_dim=8,
+            linear_value_head_dim=8,
+            layer_types=["linear_attention"] * 3 + ["full_attention"],
+        )
+    ).save_pretrained(base)
+    cfg = StrandsDeciderConfig(
+        base_model=str(base), head_type="pointer", pointer_dim=8, torch_dtype="float32", lora_r=2
+    )
     torso = Qwen3_5ForCausalLM.from_pretrained(base).model
     model = StrandsDeciderModel(cfg, torso, tok)
     model.attach_lora()
@@ -128,7 +141,9 @@ def test_install_leaves_other_devices_on_the_original(monkeypatch):
 
     monkeypatch.setattr(q35, "causal_conv1d_fn", original)
     monkeypatch.setattr(cpu_kernels, "_installed", False)
-    monkeypatch.setattr(cpu_kernels, "causal_conv1d_cpu", lambda *a, **k: pytest.fail("ran on meta"))
+    monkeypatch.setattr(
+        cpu_kernels, "causal_conv1d_cpu", lambda *a, **k: pytest.fail("ran on meta")
+    )
     assert cpu_kernels.install()
     x = torch.empty(1, 8, 9, device="meta")
     assert q35.causal_conv1d_fn(x, torch.empty(8, 4, device="meta"), None, "silu") is x

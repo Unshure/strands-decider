@@ -18,6 +18,7 @@ research/preregistrations/PREREGISTRATION-v14.md) are entered by hand below and 
 
     python research/scripts/collect.py --jevbench-root DIR --wsl-root DIR
 """
+
 from __future__ import annotations
 
 import argparse
@@ -35,43 +36,106 @@ OUT = REPO / "research" / "data"
 # default recipe (the lineage); "experiment" = trained, measured, not adopted.
 RUNS = [
     # id,    JevBench dir,  kind,         parent, torso,               what changed
-    ("v5",   "jb_3072o",    "default",    "v4",   "Qwen3-1.7B-Base",   "RuleTaker compositional rows; 3,072-token window"),
-    ("v6",   "jb_v6c",      "default",    "v5",   "Qwen3-1.7B-Base",   "slot head seeded from the LM's digit rows + KL anchor to the frozen torso"),
-    ("v7",   "jb_v7",       "default",    "v6",   "Qwen3-1.7B-Base",   "pointer readout"),
-    ("v8",   "jb_v8",       "experiment", "v7",   "Qwen3-1.7B",        "instruction-tuned torso"),
-    ("v9",   "jb_v9",       "experiment", "v7",   "Qwen3-1.7B-Base",   "+20k generated rule-execution documents"),
-    ("v10",  "jb_v10",      "experiment", "v7",   "Qwen3-1.7B-Base",   "+20k generated minimal pairs"),
-    ("v11a", "jb_v11a",     "experiment", "v7",   "Qwen3-1.7B-Base",   "question transforms replace 30% of the corpus"),
-    ("v11b", "jb_v11b",     "experiment", "v7",   "Qwen3-1.7B-Base",   "KL toward the frozen torso on changed questions"),
-    ("v12",  "jb_v12",      "experiment", "v7",   "Qwen3-1.7B-Base",   "distilled from a frozen Qwen3.5-4B"),
-    ("v13",  "jb_v13",      "default",    "v7",   "Qwen3.5-2B-Base",   "Qwen3.5-2B-Base torso"),
-    ("v14",  "jb_v14",      "default",    "v13",  "Qwen3.5-2B-Base",   "+12,909 multi-step rows with a 4B teacher"),
-    ("v15",  "jb_v15",      "experiment", "v14",  "Qwen3.5-2B-Base",   "+4,566 ShARC / ConditionalQA rows"),
-    ("v16",  "jb_v16",      "default",    "v14",  "Qwen3.5-2B-Base",   "+2,148 generated document questions"),
-    ("v17",  "jb_v17",      "default",    "v16",  "Qwen3.5-2B-Base",   "v16 with its multi-step rows replayed toward v14's own answers"),
-    ("v18",  "jb_v18",      "default",    "v17",  "Qwen3.5-2B-Base",   "v17 + 1,667 generated questions on the weak skills"),
-    ("v19",  "jb_v19",      "default",    "v18",  "Qwen3.5-2B-Base",   "v18 + 6,166 answer-adequacy rows (HelpSteer2 and generated)"),
+    (
+        "v5",
+        "jb_3072o",
+        "default",
+        "v4",
+        "Qwen3-1.7B-Base",
+        "RuleTaker compositional rows; 3,072-token window",
+    ),
+    (
+        "v6",
+        "jb_v6c",
+        "default",
+        "v5",
+        "Qwen3-1.7B-Base",
+        "slot head seeded from the LM's digit rows + KL anchor to the frozen torso",
+    ),
+    ("v7", "jb_v7", "default", "v6", "Qwen3-1.7B-Base", "pointer readout"),
+    ("v8", "jb_v8", "experiment", "v7", "Qwen3-1.7B", "instruction-tuned torso"),
+    (
+        "v9",
+        "jb_v9",
+        "experiment",
+        "v7",
+        "Qwen3-1.7B-Base",
+        "+20k generated rule-execution documents",
+    ),
+    ("v10", "jb_v10", "experiment", "v7", "Qwen3-1.7B-Base", "+20k generated minimal pairs"),
+    (
+        "v11a",
+        "jb_v11a",
+        "experiment",
+        "v7",
+        "Qwen3-1.7B-Base",
+        "question transforms replace 30% of the corpus",
+    ),
+    (
+        "v11b",
+        "jb_v11b",
+        "experiment",
+        "v7",
+        "Qwen3-1.7B-Base",
+        "KL toward the frozen torso on changed questions",
+    ),
+    ("v12", "jb_v12", "experiment", "v7", "Qwen3-1.7B-Base", "distilled from a frozen Qwen3.5-4B"),
+    ("v13", "jb_v13", "default", "v7", "Qwen3.5-2B-Base", "Qwen3.5-2B-Base torso"),
+    (
+        "v14",
+        "jb_v14",
+        "default",
+        "v13",
+        "Qwen3.5-2B-Base",
+        "+12,909 multi-step rows with a 4B teacher",
+    ),
+    ("v15", "jb_v15", "experiment", "v14", "Qwen3.5-2B-Base", "+4,566 ShARC / ConditionalQA rows"),
+    ("v16", "jb_v16", "default", "v14", "Qwen3.5-2B-Base", "+2,148 generated document questions"),
+    (
+        "v17",
+        "jb_v17",
+        "default",
+        "v16",
+        "Qwen3.5-2B-Base",
+        "v16 with its multi-step rows replayed toward v14's own answers",
+    ),
+    (
+        "v18",
+        "jb_v18",
+        "default",
+        "v17",
+        "Qwen3.5-2B-Base",
+        "v17 + 1,667 generated questions on the weak skills",
+    ),
+    (
+        "v19",
+        "jb_v19",
+        "default",
+        "v18",
+        "Qwen3.5-2B-Base",
+        "v18 + 6,166 answer-adequacy rows (HelpSteer2 and generated)",
+    ),
 ]
 # Side runs: measured on JevBench, not generations.
 SIDE = [
-    ("v5 @1024",          "jb_v5",           "v5 at the old 1,024-token window"),
-    ("v5 @1024 +fix",     "jb_fix",          "v5, question reserved before truncating the state, 1,024 window"),
-    ("v5 @4096",          "jb_4096",         "v5 at a 4,096-token window"),
-    ("v6 uncalibrated",   "jb_v6",           "v6 before temperature fitting"),
-    ("v6 arm: instruct",  "jb_arm_instruct", "v5 corpus, instruct torso"),
-    ("v6 arm: lm_head",   "jb_arm_lmhead",   "v5 corpus, head seeded from LM digit rows"),
-    ("v6 arm: KL",        "jb_arm_kl",       "v5 corpus, KL anchor to the frozen torso"),
-    ("scaling: 1.7B",     "jb_head17",       "controlled scaling test, Qwen3-1.7B"),
-    ("scaling: 4B",       "jb_head4b",       "controlled scaling test, Qwen3-4B"),
-    ("v14 prefix cache",  "jb_v14pc",        "v14 served through the shared-prefix cache"),
+    ("v5 @1024", "jb_v5", "v5 at the old 1,024-token window"),
+    ("v5 @1024 +fix", "jb_fix", "v5, question reserved before truncating the state, 1,024 window"),
+    ("v5 @4096", "jb_4096", "v5 at a 4,096-token window"),
+    ("v6 uncalibrated", "jb_v6", "v6 before temperature fitting"),
+    ("v6 arm: instruct", "jb_arm_instruct", "v5 corpus, instruct torso"),
+    ("v6 arm: lm_head", "jb_arm_lmhead", "v5 corpus, head seeded from LM digit rows"),
+    ("v6 arm: KL", "jb_arm_kl", "v5 corpus, KL anchor to the frozen torso"),
+    ("scaling: 1.7B", "jb_head17", "controlled scaling test, Qwen3-1.7B"),
+    ("scaling: 4B", "jb_head4b", "controlled scaling test, Qwen3-4B"),
+    ("v14 prefix cache", "jb_v14pc", "v14 served through the shared-prefix cache"),
 ]
 REFERENCES = [
-    ("decider-2b v10",       "jb_dv10",       "Mapika decider-2b v10, same Qwen3.5-2B-Base torso"),
-    ("decider-2b v11",       "jb_dv11",       "Mapika decider-2b v11: v10 + document-question stage"),
-    ("Qwen3.5-4B, frozen",   "jb_semif35",    "frozen model read through the chat template (SemIf)"),
-    ("Qwen3.5-2B, frozen",   "jb_semif35_2b", "frozen model read through the chat template (SemIf)"),
-    ("Qwen3-8B, frozen",     "jb_semif8",     "frozen model read through the chat template (SemIf)"),
-    ("Qwen3-1.7B, frozen",   "jb_semif17",    "frozen model read through the chat template (SemIf)"),
+    ("decider-2b v10", "jb_dv10", "Mapika decider-2b v10, same Qwen3.5-2B-Base torso"),
+    ("decider-2b v11", "jb_dv11", "Mapika decider-2b v11: v10 + document-question stage"),
+    ("Qwen3.5-4B, frozen", "jb_semif35", "frozen model read through the chat template (SemIf)"),
+    ("Qwen3.5-2B, frozen", "jb_semif35_2b", "frozen model read through the chat template (SemIf)"),
+    ("Qwen3-8B, frozen", "jb_semif8", "frozen model read through the chat template (SemIf)"),
+    ("Qwen3-1.7B, frozen", "jb_semif17", "frozen model read through the chat template (SemIf)"),
 ]
 # Held-out classification tasks: emotion, hate_severity, massive_intent, sarcasm (6,000
 # rows). v4 and v7 onwards were scored on the same file. v5's held-out set added three
@@ -82,7 +146,11 @@ REFERENCES = [
 HELDOUT_TASKS = ("emotion", "hate_severity", "massive_intent", "sarcasm")
 # The question type of each held-out task, for rebuilding a by-type split from per-task
 # results (v5's report mixes in RuleTaker, so its own by_kind is not comparable).
-HELDOUT_KIND_TASKS = {"noul": ("sarcasm",), "choice": ("emotion", "massive_intent"), "score": ("hate_severity",)}
+HELDOUT_KIND_TASKS = {
+    "noul": ("sarcasm",),
+    "choice": ("emotion", "massive_intent"),
+    "score": ("hate_severity",),
+}
 HELDOUT = {
     "v4": ("repo", "reports/heldout_v4.json"),
     "v5": ("repo", "reports/heldout_v5.json"),
@@ -132,9 +200,15 @@ INDIST = {
     "scaling: 1.7B, MLP head": ("repo", "reports/indist_head_mlp512.json"),
     "scaling: 4B": ("repo", "reports/indist_head_4b.json"),
 }
-MULTISTEP_TEXT = {"v13": {"boardgame": 0.519, "contractnli": 0.564, "hotpotqa": 0.705, "musique": 0.202}}
-MULTISTEP_ROWS = {r: f"reports/{r}_multistep_v14_eval.json" for r in ("v14", "v15", "v16", "v17", "v18", "v19")}
-GENERATED_ROWS = {r: f"reports/{r}_generated_v16_eval.json" for r in ("v14", "v16", "v17", "v18", "v19")}
+MULTISTEP_TEXT = {
+    "v13": {"boardgame": 0.519, "contractnli": 0.564, "hotpotqa": 0.705, "musique": 0.202}
+}
+MULTISTEP_ROWS = {
+    r: f"reports/{r}_multistep_v14_eval.json" for r in ("v14", "v15", "v16", "v17", "v18", "v19")
+}
+GENERATED_ROWS = {
+    r: f"reports/{r}_generated_v16_eval.json" for r in ("v14", "v16", "v17", "v18", "v19")
+}
 
 # Training histories (WSL checkpoints): the logged loss is the whole objective, and the two
 # KL terms are logged unweighted, each averaged over every micro-batch, so the
@@ -146,7 +220,11 @@ TRAINING = {"v17": "checkpoints/hobson-2b-v17"}
 # path against plain batched encoding. The script (bench_prefix.py, not committed)
 # printed these and saved nothing, so they are entered by hand from its output, 2026-09-26.
 PREFIX_BENCH = [  # (questions, prefix ms, batched ms, same answer on both paths)
-    (1, 278, 278, 1), (4, 364, 998, 4), (8, 369, 1964, 8), (16, 445, 4086, 15)]
+    (1, 278, 278, 1),
+    (4, 364, 998, 4),
+    (8, 369, 1964, 8),
+    (16, 445, 4086, 15),
+]
 
 
 def read_jsonl(path):
@@ -181,9 +259,11 @@ def main():
 
     # --- JevBench per run ---
     runs, results, families, latency = [], [], [], []
-    catalogue = ([(r, d, kind, parent, torso, change) for r, d, kind, parent, torso, change in RUNS]
-                 + [(r, d, "side", "", "", change) for r, d, change in SIDE]
-                 + [(r, d, "reference", "", "", change) for r, d, change in REFERENCES])
+    catalogue = (
+        [(r, d, kind, parent, torso, change) for r, d, kind, parent, torso, change in RUNS]
+        + [(r, d, "side", "", "", change) for r, d, change in SIDE]
+        + [(r, d, "reference", "", "", change) for r, d, change in REFERENCES]
+    )
     for order, (run, d, kind, parent, torso, change) in enumerate(catalogue):
         res = read_jsonl(jb / d / "results.jsonl")
         assert len(res) == 231, (d, len(res))
@@ -199,33 +279,72 @@ def main():
             fam[(t["family"], t["tier"])][1] += 1
             results.append({"run": run, "task_id": tid, "correct": int(ok)})
         first = min(res, key=lambda r: r["ts"])["task_id"]  # the request that warms the server up
-        latency += [{"run": run, "task_id": r["task_id"], "input_tokens": r["usage"]["input_tokens"],
-                     "latency_ms": round(r["latency_s"] * 1000, 1), "first_request": int(r["task_id"] == first)}
-                    for r in res]
+        latency += [
+            {
+                "run": run,
+                "task_id": r["task_id"],
+                "input_tokens": r["usage"]["input_tokens"],
+                "latency_ms": round(r["latency_s"] * 1000, 1),
+                "first_request": int(r["task_id"] == first),
+            }
+            for r in res
+        ]
         for (f, tier), (k, n) in sorted(fam.items()):
-            families.append({"run": run, "family": f, "tier": tier, "correct": k, "n": n,
-                             "accuracy": round(k / n, 4)})
+            families.append(
+                {
+                    "run": run,
+                    "family": f,
+                    "tier": tier,
+                    "correct": k,
+                    "n": n,
+                    "accuracy": round(k / n, 4),
+                }
+            )
         mtime = datetime.fromtimestamp(os.path.getmtime(jb / d / "results.jsonl"))
-        runs.append({
-            "order": order, "run": run, "kind": kind, "parent": parent, "torso": torso,
-            "change": change, "jevbench_date": mtime.strftime("%Y-%m-%d"),
-            "n_correct": int(s["n_correct"]), "accuracy": round(s["accuracy"], 4),
-            "macro_accuracy": round(s["macro_accuracy"], 4), "ece": round(s["ece"]["ece"], 4),
-            "brier": round(s["brier_mean"], 4), "ordinal_mae": round(s["ordinal_mae"], 4),
-            "paraphrase_consistency": round(s["paraphrase_consistency"]["agreement"], 4),
-            "latency_p50_s": round(s["latency"]["p50_s"], 3), "latency_p95_s": round(s["latency"]["p95_s"], 3),
-            **{f"{t}_correct": tier_n[t][0] for t in ("easy", "standard", "hard")},
-            **{f"{t}_n": tier_n[t][1] for t in ("easy", "standard", "hard")},
-            "source": f"{d}/summary.json",
-        })
+        runs.append(
+            {
+                "order": order,
+                "run": run,
+                "kind": kind,
+                "parent": parent,
+                "torso": torso,
+                "change": change,
+                "jevbench_date": mtime.strftime("%Y-%m-%d"),
+                "n_correct": int(s["n_correct"]),
+                "accuracy": round(s["accuracy"], 4),
+                "macro_accuracy": round(s["macro_accuracy"], 4),
+                "ece": round(s["ece"]["ece"], 4),
+                "brier": round(s["brier_mean"], 4),
+                "ordinal_mae": round(s["ordinal_mae"], 4),
+                "paraphrase_consistency": round(s["paraphrase_consistency"]["agreement"], 4),
+                "latency_p50_s": round(s["latency"]["p50_s"], 3),
+                "latency_p95_s": round(s["latency"]["p95_s"], 3),
+                **{f"{t}_correct": tier_n[t][0] for t in ("easy", "standard", "hard")},
+                **{f"{t}_n": tier_n[t][1] for t in ("easy", "standard", "hard")},
+                "source": f"{d}/summary.json",
+            }
+        )
     write_csv("runs.csv", runs, list(runs[0]))
     write_csv("jevbench_results.csv", results, ["run", "task_id", "correct"])
-    write_csv("jevbench_families.csv", families, ["run", "family", "tier", "correct", "n", "accuracy"])
+    write_csv(
+        "jevbench_families.csv", families, ["run", "family", "tier", "correct", "n", "accuracy"]
+    )
     write_csv("jevbench_latency.csv", latency, list(latency[0]))
-    write_csv("latency_questions.csv",
-              [{"run": "v14", "questions": q, "prefix_ms": p, "batched_ms": b, "same_answer": s,
-                "source": "bench_prefix.py output, 2026-09-26"} for q, p, b, s in PREFIX_BENCH],
-              ["run", "questions", "prefix_ms", "batched_ms", "same_answer", "source"])
+    write_csv(
+        "latency_questions.csv",
+        [
+            {
+                "run": "v14",
+                "questions": q,
+                "prefix_ms": p,
+                "batched_ms": b,
+                "same_answer": s,
+                "source": "bench_prefix.py output, 2026-09-26",
+            }
+            for q, p, b, s in PREFIX_BENCH
+        ],
+        ["run", "questions", "prefix_ms", "batched_ms", "same_answer", "source"],
+    )
 
     # --- held-out short tasks ---
     held = []
@@ -235,21 +354,39 @@ def main():
         if extra:  # recombine the four common tasks from per-task means
             t = [d["by_task"][k] for k in HELDOUT_TASKS]
             n = sum(x["n"] for x in t)
+
             def mean(key, t=t, n=n):
                 return sum(x[key] * x["n"] for x in t) / n
+
             def kind_acc(kind, d=d):
                 ts = [d["by_task"][k] for k in HELDOUT_KIND_TASKS[kind]]
                 return round(sum(x["accuracy"] * x["n"] for x in ts) / sum(x["n"] for x in ts), 4)
-            row = {"run": run, "n": n, "accuracy": round(mean("accuracy"), 4), "ece": "",
-                   "nll": round(mean("nll"), 4), "mean_confidence": round(mean("mean_confidence"), 4),
-                   **{f"{k}_accuracy": kind_acc(k) for k in ("noul", "choice", "score")},
-                   "note": f"four common tasks recombined; report also held {', '.join(extra)}"}
+
+            row = {
+                "run": run,
+                "n": n,
+                "accuracy": round(mean("accuracy"), 4),
+                "ece": "",
+                "nll": round(mean("nll"), 4),
+                "mean_confidence": round(mean("mean_confidence"), 4),
+                **{f"{k}_accuracy": kind_acc(k) for k in ("noul", "choice", "score")},
+                "note": f"four common tasks recombined; report also held {', '.join(extra)}",
+            }
         else:
             o = d["overall"]
-            row = {"run": run, "n": o["n"], "accuracy": round(o["accuracy"], 4), "ece": round(o["ece"], 4),
-                   "nll": round(o["nll"], 4), "mean_confidence": round(o["mean_confidence"], 4),
-                   **{f"{k}_accuracy": round(d["by_kind"][k]["accuracy"], 4) for k in ("noul", "choice", "score")},
-                   "note": ""}
+            row = {
+                "run": run,
+                "n": o["n"],
+                "accuracy": round(o["accuracy"], 4),
+                "ece": round(o["ece"], 4),
+                "nll": round(o["nll"], 4),
+                "mean_confidence": round(o["mean_confidence"], 4),
+                **{
+                    f"{k}_accuracy": round(d["by_kind"][k]["accuracy"], 4)
+                    for k in ("noul", "choice", "score")
+                },
+                "note": "",
+            }
         row["source"] = rel
         held.append(row)
     write_csv("heldout_short.csv", held, list(held[0]))
@@ -258,12 +395,22 @@ def main():
     for run, (root, rel) in INDIST.items():
         d = json.load(open(roots[root] / rel, encoding="utf-8"))
         o = d["overall"]
-        indist.append({"run": run, "n": o["n"], "n_tasks": len(d["by_task"]),
-                       "accuracy": round(o["accuracy"], 4), "ece": round(o["ece"], 4),
-                       "nll": round(o["nll"], 4),
-                       **{f"{k}_accuracy": round(d["by_kind"][k]["accuracy"], 4) for k in ("noul", "choice", "score")},
-                       **{f"{k}_n": d["by_kind"][k]["n"] for k in ("noul", "choice", "score")},
-                       "source": rel})
+        indist.append(
+            {
+                "run": run,
+                "n": o["n"],
+                "n_tasks": len(d["by_task"]),
+                "accuracy": round(o["accuracy"], 4),
+                "ece": round(o["ece"], 4),
+                "nll": round(o["nll"], 4),
+                **{
+                    f"{k}_accuracy": round(d["by_kind"][k]["accuracy"], 4)
+                    for k in ("noul", "choice", "score")
+                },
+                **{f"{k}_n": d["by_kind"][k]["n"] for k in ("noul", "choice", "score")},
+                "source": rel,
+            }
+        )
     write_csv("indist.csv", indist, list(indist[0]))
 
     # --- question-sensitivity probe: held-out choice tasks ---
@@ -272,16 +419,25 @@ def main():
         d = json.load(open(roots[root] / rel, encoding="utf-8"))["choice, held-out tasks"]
         key = key or next(k for k in d["real/acc"] if not k.endswith("frozen"))
         for form in ("first", "last", "not", "irrelevant"):
-            probe.append({"run": run, "form": form,
-                          "same_answer_as_real": round(d[f"{form}/same_as_real"][key], 4),
-                          "frozen_base": round(d[f"{form}/same_as_real"][f"{key} frozen"], 4),
-                          "real_accuracy": round(d["real/acc"][key], 4), "source": rel})
+            probe.append(
+                {
+                    "run": run,
+                    "form": form,
+                    "same_answer_as_real": round(d[f"{form}/same_as_real"][key], 4),
+                    "frozen_base": round(d[f"{form}/same_as_real"][f"{key} frozen"], 4),
+                    "real_accuracy": round(d["real/acc"][key], 4),
+                    "source": rel,
+                }
+            )
     write_csv("probe_heldout_choice.csv", probe, list(probe[0]))
 
     # --- multi-step sets and generated eval ---
     wsl = roots["wsl"]
-    multi = [{"run": r, "source": s, "n": "", "accuracy": v, "measured_by": "PREREGISTRATION-v14.md"}
-             for r, vals in MULTISTEP_TEXT.items() for s, v in vals.items()]
+    multi = [
+        {"run": r, "source": s, "n": "", "accuracy": v, "measured_by": "PREREGISTRATION-v14.md"}
+        for r, vals in MULTISTEP_TEXT.items()
+        for s, v in vals.items()
+    ]
     ms_tasks = [r["task"] for r in read_jsonl(wsl / "data" / "multistep_v14_eval.jsonl")]
     for run, rel in MULTISTEP_ROWS.items():
         ok = json.load(open(wsl / rel))
@@ -291,21 +447,34 @@ def main():
                 continue
             by[t][0] += x
             by[t][1] += 1
-        multi += [{"run": run, "source": t, "n": n, "accuracy": round(k / n, 4), "measured_by": rel}
-                  for t, (k, n) in sorted(by.items())]
+        multi += [
+            {"run": run, "source": t, "n": n, "accuracy": round(k / n, 4), "measured_by": rel}
+            for t, (k, n) in sorted(by.items())
+        ]
     gen_rows = read_jsonl(wsl / "data" / "generated_v16_eval.jsonl")
     for run, rel in GENERATED_ROWS.items():
         ok = json.load(open(wsl / rel))
         k, n = sum(bool(x) for x in ok), sum(x is not None for x in ok)
-        multi.append({"run": run, "source": "generated (held-out domains)", "n": n,
-                      "accuracy": round(k / n, 4), "measured_by": rel})
+        multi.append(
+            {
+                "run": run,
+                "source": "generated (held-out domains)",
+                "n": n,
+                "accuracy": round(k / n, 4),
+                "measured_by": rel,
+            }
+        )
         by = defaultdict(lambda: [0, 0])
         for r, x in zip(gen_rows, ok, strict=True):
             by[r["task"]][0] += bool(x)
             by[r["task"]][1] += 1
-        multi += [{"run": run, "source": t, "n": n2, "accuracy": round(k2 / n2, 4), "measured_by": rel}
-                  for t, (k2, n2) in sorted(by.items())]
-    write_csv("multistep_and_generated.csv", multi, ["run", "source", "n", "accuracy", "measured_by"])
+        multi += [
+            {"run": run, "source": t, "n": n2, "accuracy": round(k2 / n2, 4), "measured_by": rel}
+            for t, (k2, n2) in sorted(by.items())
+        ]
+    write_csv(
+        "multistep_and_generated.csv", multi, ["run", "source", "n", "accuracy", "measured_by"]
+    )
 
     # --- training histories ---
     train = []
@@ -313,15 +482,30 @@ def main():
         cfg = json.load(open(wsl / rel / "train_config.json"))
         wk, wt = cfg.get("kl_frozen_weight", 0.0), cfg.get("teacher_weight", 0.0)
         for e in json.load(open(wsl / rel / "history.json")):
-            row = {"run": run, "step": e["step"], "kind": "val" if "val_loss" in e else "train",
-                   "loss": "", "ce": "", "kl_frozen": "", "kl_teacher": "", "kl_frozen_weight": wk,
-                   "teacher_weight": wt, "val_loss": "", "val_acc": "", "source": f"{rel}/history.json"}
+            row = {
+                "run": run,
+                "step": e["step"],
+                "kind": "val" if "val_loss" in e else "train",
+                "loss": "",
+                "ce": "",
+                "kl_frozen": "",
+                "kl_teacher": "",
+                "kl_frozen_weight": wk,
+                "teacher_weight": wt,
+                "val_loss": "",
+                "val_acc": "",
+                "source": f"{rel}/history.json",
+            }
             if row["kind"] == "val":
                 row.update(val_loss=round(e["val_loss"], 5), val_acc=round(e["val_acc"], 5))
             else:
                 kl, tkl = e.get("kl", 0.0), e.get("teacher_kl", 0.0)
-                row.update(loss=round(e["loss"], 5), kl_frozen=round(kl, 5), kl_teacher=round(tkl, 5),
-                           ce=round(e["loss"] - wk * kl - wt * tkl, 5))
+                row.update(
+                    loss=round(e["loss"], 5),
+                    kl_frozen=round(kl, 5),
+                    kl_teacher=round(tkl, 5),
+                    ce=round(e["loss"] - wk * kl - wt * tkl, 5),
+                )
             train.append(row)
     write_csv("training_history.csv", train, list(train[0]))
 

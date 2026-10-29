@@ -72,9 +72,7 @@ class Example:
             return NoulQuestion(instructions=instr, criteria=crit)
         if self.kind == "choice":
             return ChoiceQuestion(instructions=instr, criteria=crit)
-        return ScoreQuestion(
-            instructions=instr, criteria=[desc for _, desc in self.options]
-        )
+        return ScoreQuestion(instructions=instr, criteria=[desc for _, desc in self.options])
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)

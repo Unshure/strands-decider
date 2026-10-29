@@ -58,28 +58,35 @@ def serve_cmd(
     host: str = typer.Option("127.0.0.1"),
     port: int = typer.Option(8000),
     device: str | None = typer.Option(
-        None, "--device",
+        None,
+        "--device",
         help="cuda, mps or cpu (torch), or mlx (Apple silicon, needs the mlx extra). "
         "Auto-detected when omitted: cuda > mps > cpu; mlx only when asked for.",
     ),
     no_prefix_cache: bool = typer.Option(False, "--no-prefix-cache"),
     model_name: str | None = typer.Option(
-        None, "--model-name",
+        None,
+        "--model-name",
         help="Value returned as `model` in responses. Defaults to the checkpoint basename.",
     ),
     strict_window: bool = typer.Option(
-        False, "--strict-window",
+        False,
+        "--strict-window",
         help="Reject (HTTP 422) a prompt longer than the context window instead of truncating it.",
     ),
     vision: bool = typer.Option(
-        False, "--vision",
+        False,
+        "--vision",
         help="Keep Qwen3.5's vision tower so requests may carry `images` (docs/vision.md).",
     ),
     max_batch: int = typer.Option(
-        32, "--max-batch", help="Questions encoded per forward pass; lower it for very long states.",
+        32,
+        "--max-batch",
+        help="Questions encoded per forward pass; lower it for very long states.",
     ),
     max_batch_tokens: int | None = typer.Option(
-        None, "--max-batch-tokens",
+        None,
+        "--max-batch-tokens",
         help="Also cap one forward's padded tokens (questions x longest state + question); for long-context torsos.",
     ),
 ) -> None:
@@ -89,9 +96,15 @@ def serve_cmd(
     selected_device = resolve_device(device)
     console.print(f"[green]serving[/] {checkpoint} on http://{host}:{port} ({selected_device})")
     serve(
-        checkpoint, host=host, port=port, device=selected_device,
-        use_prefix_cache=not no_prefix_cache, model_name=model_name,
-        strict_window=strict_window, max_batch=max_batch, vision=vision,
+        checkpoint,
+        host=host,
+        port=port,
+        device=selected_device,
+        use_prefix_cache=not no_prefix_cache,
+        model_name=model_name,
+        strict_window=strict_window,
+        max_batch=max_batch,
+        vision=vision,
         max_batch_tokens=max_batch_tokens,
     )
 
@@ -111,7 +124,8 @@ def ask_cmd(
         None, "--score", help="'question?=low,mid,high' (ascending); repeat."
     ),
     device: str | None = typer.Option(
-        None, "--device",
+        None,
+        "--device",
         help="cuda, mps or cpu (torch), or mlx (Apple silicon, needs the mlx extra). "
         "Auto-detected when omitted: cuda > mps > cpu; mlx only when asked for.",
     ),
@@ -171,8 +185,7 @@ def _print_answers(response: SystemOneResponse) -> None:
             console.print(f"[bold]{name}[/] noul = [cyan]{ans.noul:.3f}[/]")
         elif ans.type == "choice":
             console.print(
-                f"[bold]{name}[/] -> [cyan]{ans.choice}[/] "
-                f"(confidence {ans.confidence:.3f})"
+                f"[bold]{name}[/] -> [cyan]{ans.choice}[/] (confidence {ans.confidence:.3f})"
             )
             for opt, p in sorted(ans.probabilities.items(), key=lambda kv: -kv[1]):
                 console.print(f"    {opt:<24} {p:.3f}")

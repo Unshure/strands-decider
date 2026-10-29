@@ -217,10 +217,7 @@ class SystemOneCollator:
         width = self.cfg.num_slots
         if pointer:
             offs = enc["offset_mapping"].tolist()
-            per = [
-                self.option_token_index(offs[i], sp, base)
-                for i, (base, sp) in enumerate(spans)
-            ]
+            per = [self.option_token_index(offs[i], sp, base) for i, (base, sp) in enumerate(spans)]
             width = max(len(p) for p in per)
             out["opt_idx"] = torch.tensor(
                 [p + [-1] * (width - len(p)) for p in per], dtype=torch.long

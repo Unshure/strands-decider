@@ -113,15 +113,26 @@ def _fork_layered_cache(cache: Any, n: int) -> Any:
                 if name in _SHARED_TENSORS and v.dim() == 0:
                     continue  # per-layer, not per-row: every fork keeps it as it is
                 if not is_state:
-                    raise UnforkableCache(f"cache layer {type(layer).__name__} holds tensor {name!r}")
+                    raise UnforkableCache(
+                        f"cache layer {type(layer).__name__} holds tensor {name!r}"
+                    )
                 if v.numel():
                     setattr(nl, name, v.expand(n, *v.shape[1:]).contiguous())
             elif isinstance(v, dict):
                 if any(isinstance(t, torch.Tensor) for t in v.values()) and not is_state:
-                    raise UnforkableCache(f"cache layer {type(layer).__name__} holds tensors in {name!r}")
-                setattr(nl, name, {k: t.expand(n, *t.shape[1:]).contiguous()
-                                   if isinstance(t, torch.Tensor) and t.numel() else t
-                                   for k, t in v.items()})
+                    raise UnforkableCache(
+                        f"cache layer {type(layer).__name__} holds tensors in {name!r}"
+                    )
+                setattr(
+                    nl,
+                    name,
+                    {
+                        k: t.expand(n, *t.shape[1:]).contiguous()
+                        if isinstance(t, torch.Tensor) and t.numel()
+                        else t
+                        for k, t in v.items()
+                    },
+                )
         fork.layers.append(nl)
     return fork
 
@@ -193,7 +204,6 @@ class SystemOneEngine:
             dtype=torch.float32,
         )
 
-
     def _fit(
         self, state_text: str, question_texts: list[str]
     ) -> tuple[list[int], list[list[int]], list[list[tuple[int, int]]]]:
@@ -218,8 +228,7 @@ class SystemOneEngine:
         """
         max_len = self.model.config.max_length
         with self._tok_lock:
-            enc = self.tok(question_texts, add_special_tokens=False,
-                           return_offsets_mapping=True)
+            enc = self.tok(question_texts, add_special_tokens=False, return_offsets_mapping=True)
             q = enc["input_ids"]
             offs = enc["offset_mapping"]
             longest = max(len(x) for x in q)
@@ -248,7 +257,9 @@ class SystemOneEngine:
         return s, q, kept
 
     def _option_idx(
-        self, rendered: list[RenderedQuestion], base: int,
+        self,
+        rendered: list[RenderedQuestion],
+        base: int,
         offsets: list[list[tuple[int, int]]],
     ) -> torch.Tensor:
         """Option token positions for a pointer head, offset by `base`.
@@ -272,9 +283,7 @@ class SystemOneEngine:
         """Right-pad to a rectangle; pool_last_token finds the last real token by mask."""
         pad_id = self.tok.pad_token_id if self.tok.pad_token_id is not None else 0
         width = max(len(x) for x in seqs)
-        ids = torch.tensor(
-            [x + [pad_id] * (width - len(x)) for x in seqs], device=self.device
-        )
+        ids = torch.tensor([x + [pad_id] * (width - len(x)) for x in seqs], device=self.device)
         mask = torch.tensor(
             [[1] * len(x) + [0] * (width - len(x)) for x in seqs], device=self.device
         )
@@ -284,8 +293,11 @@ class SystemOneEngine:
 
     @torch.inference_mode()  # type: ignore[untyped-decorator]
     def _slot_probs_batched(
-        self, s: list[int], q: list[list[int]],
-        n_slots: list[int], kinds: list[str],
+        self,
+        s: list[int],
+        q: list[list[int]],
+        n_slots: list[int],
+        kinds: list[str],
         offsets: list[list[tuple[int, int]]],
         rendered: list[RenderedQuestion] | None = None,
     ) -> tuple[torch.Tensor, int]:
@@ -300,8 +312,11 @@ class SystemOneEngine:
         ids, mask = self._pad([s + qi for qi in q])
         # This path forwards the whole prompt, so option positions sit after the state.
         assert rendered is not None or self.model.config.head_type != "pointer"
-        opt_idx = (self._option_idx(rendered, len(s), offsets)  # type: ignore[arg-type]
-                   if self.model.config.head_type == "pointer" else None)
+        opt_idx = (
+            self._option_idx(rendered, len(s), offsets)  # type: ignore[arg-type]
+            if self.model.config.head_type == "pointer"
+            else None
+        )
         out = self.model(
             input_ids=ids,
             attention_mask=mask,
@@ -408,20 +423,33 @@ class SystemOneEngine:
             # One question gains nothing from a shared prefix and pays a second forward:
             # measured on JevBench (one question per task), p50 0.111 s batched, 0.204 s
             # through the prefix path, with the same answers.
-            if (self.cfg.use_prefix_cache and not self._prefix_cache_unforkable
-                    and len(chunk_rendered) > 1):
+            if (
+                self.cfg.use_prefix_cache
+                and not self._prefix_cache_unforkable
+                and len(chunk_rendered) > 1
+            ):
                 try:
                     probs, ntok = self._slot_probs_shared_prefix(
-                        state_ids, question_ids, chunk_slots, chunk_kinds, offsets,
+                        state_ids,
+                        question_ids,
+                        chunk_slots,
+                        chunk_kinds,
+                        offsets,
                         rendered=chunk_rendered,
                     )
                     total_tokens += ntok
                 except UnforkableCache as e:
-                    print(f"[strands-decider] shared-prefix cache disabled ({e}); using batched encoding")
+                    print(
+                        f"[strands-decider] shared-prefix cache disabled ({e}); using batched encoding"
+                    )
                     self._prefix_cache_unforkable = True
             if probs is None:
                 probs, ntok = self._slot_probs_batched(
-                    state_ids, question_ids, chunk_slots, chunk_kinds, offsets,
+                    state_ids,
+                    question_ids,
+                    chunk_slots,
+                    chunk_kinds,
+                    offsets,
                     rendered=chunk_rendered,
                 )
                 total_tokens += ntok
@@ -517,9 +545,7 @@ def _to_answer(
         probabilities={k: round(v, 4) for k, v in ordered.items()},
         # Ordinal confidence, not max-probability: see derive_score_confidence.
         confidence=round(
-            derive_score_confidence(
-                list(ordered.values()), ordinal_smoothing=ordinal_smoothing
-            ),
+            derive_score_confidence(list(ordered.values()), ordinal_smoothing=ordinal_smoothing),
             4,
         ),
     )
@@ -537,9 +563,7 @@ def load_engine(
     if device == "mlx":
         return load_mlx(checkpoint, EngineConfig(device="mlx", use_prefix_cache=use_prefix_cache))
     model = StrandsDeciderModel.load(checkpoint, attn_implementation=attn_implementation)
-    return SystemOneEngine(
-        model, EngineConfig(device=device, use_prefix_cache=use_prefix_cache)
-    )
+    return SystemOneEngine(model, EngineConfig(device=device, use_prefix_cache=use_prefix_cache))
 
 
 def mlx_available() -> bool:

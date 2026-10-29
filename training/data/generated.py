@@ -21,6 +21,7 @@ v18 combines further exports into a file of its own:
     python -m training.data.generated --src data/generators/gen_pilot_qwen data/generators/gen_mixed_pilot data/generators/gen_weak \
         --out data/generated_v18.jsonl --eval-out data/generated_v18_eval.jsonl
 """
+
 from __future__ import annotations
 
 import argparse
@@ -84,9 +85,18 @@ def shuffle_options(examples: list[Example], seed: int = 0) -> list[Example]:
         order = list(range(len(e.options)))
         if e.kind == "choice":  # noul and score keep their canonical order
             rng.shuffle(order)
-        out.append(Example(kind=e.kind, state=e.state, instructions=e.instructions,
-                           options=[e.options[i] for i in order], label=order.index(e.label),
-                           task=e.task, weight=e.weight, instruction_variants=e.instruction_variants))
+        out.append(
+            Example(
+                kind=e.kind,
+                state=e.state,
+                instructions=e.instructions,
+                options=[e.options[i] for i in order],
+                label=order.index(e.label),
+                task=e.task,
+                weight=e.weight,
+                instruction_variants=e.instruction_variants,
+            )
+        )
     return out
 
 
@@ -104,9 +114,23 @@ def attach_paraphrases(examples: list[Example], table: dict) -> list[Example]:
     out = []
     for e in examples:
         ps = table.get(e.instructions.strip(), [])
-        variants = [e.instructions] + [p for p in ps if p != e.instructions] if ps else list(e.instruction_variants)
-        out.append(Example(kind=e.kind, state=e.state, instructions=e.instructions, options=e.options,
-                           label=e.label, task=e.task, weight=e.weight, instruction_variants=variants))
+        variants = (
+            [e.instructions] + [p for p in ps if p != e.instructions]
+            if ps
+            else list(e.instruction_variants)
+        )
+        out.append(
+            Example(
+                kind=e.kind,
+                state=e.state,
+                instructions=e.instructions,
+                options=e.options,
+                label=e.label,
+                task=e.task,
+                weight=e.weight,
+                instruction_variants=variants,
+            )
+        )
     return out
 
 
@@ -117,8 +141,18 @@ def paraphrase_pairs(examples: list[Example], table: dict) -> list[Example]:
     for e in examples:
         ps = table.get(e.instructions.strip())
         if ps:
-            out += [e, Example(kind=e.kind, state=e.state, instructions=ps[0], options=e.options,
-                               label=e.label, task=e.task, weight=e.weight)]
+            out += [
+                e,
+                Example(
+                    kind=e.kind,
+                    state=e.state,
+                    instructions=ps[0],
+                    options=e.options,
+                    label=e.label,
+                    task=e.task,
+                    weight=e.weight,
+                ),
+            ]
     return out
 
 
@@ -131,12 +165,16 @@ def attach_main(args: argparse.Namespace) -> None:
     table = load_paraphrases(args.paraphrases)
     train = attach_paraphrases(list(read_jsonl(args.attach)), table)
     write_jsonl(args.out, train)
-    print(f"{args.out}: paraphrases attached to {sum(len(e.instruction_variants) > 1 for e in train):,} "
-          f"of {len(train):,} rows from {args.attach}")
+    print(
+        f"{args.out}: paraphrases attached to {sum(len(e.instruction_variants) > 1 for e in train):,} "
+        f"of {len(train):,} rows from {args.attach}"
+    )
     if args.attach_eval and args.pairs_out:
         pairs = paraphrase_pairs(list(read_jsonl(args.attach_eval)), table)
         write_jsonl(args.pairs_out, pairs)
-        print(f"{args.pairs_out}: {len(pairs) // 2:,} eval rows from {args.attach_eval}, each with one paraphrase")
+        print(
+            f"{args.pairs_out}: {len(pairs) // 2:,} eval rows from {args.attach_eval}, each with one paraphrase"
+        )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -144,19 +182,37 @@ def main(argv: list[str] | None = None) -> None:
 
     from .format import write_jsonl
 
-    ap = argparse.ArgumentParser(description="Build the generated-document training and eval sets (v16).")
-    ap.add_argument("--src", nargs="+", default=["data/generators/gen_v16"],
-                    help="the generator's output directories, combined")
+    ap = argparse.ArgumentParser(
+        description="Build the generated-document training and eval sets (v16)."
+    )
+    ap.add_argument(
+        "--src",
+        nargs="+",
+        default=["data/generators/gen_v16"],
+        help="the generator's output directories, combined",
+    )
     ap.add_argument("--out", default="data/generated_v16.jsonl")
     ap.add_argument("--eval-out", default="data/generated_v16_eval.jsonl")
     ap.add_argument("--tokenizer", default="Qwen/Qwen3.5-2B-Base")
     ap.add_argument("--max-tokens", type=int, default=3000)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--paraphrases", default="", help="checked paraphrases to attach as instruction variants")
-    ap.add_argument("--pairs-out", default="", help="with --paraphrases: the paired consistency eval")
-    ap.add_argument("--attach", default="", help="an already built training file to attach --paraphrases to "
-                                                 "(no rebuild; written to --out)")
-    ap.add_argument("--attach-eval", default="", help="with --attach: an already built eval file for --pairs-out")
+    ap.add_argument(
+        "--paraphrases", default="", help="checked paraphrases to attach as instruction variants"
+    )
+    ap.add_argument(
+        "--pairs-out", default="", help="with --paraphrases: the paired consistency eval"
+    )
+    ap.add_argument(
+        "--attach",
+        default="",
+        help="an already built training file to attach --paraphrases to "
+        "(no rebuild; written to --out)",
+    )
+    ap.add_argument(
+        "--attach-eval",
+        default="",
+        help="with --attach: an already built eval file for --pairs-out",
+    )
     args = ap.parse_args(argv)
     if args.attach:
         if not args.paraphrases:
@@ -167,21 +223,30 @@ def main(argv: list[str] | None = None) -> None:
     tok = AutoTokenizer.from_pretrained(args.tokenizer)
 
     raw = [e for d in args.src for e in load(f"{d}/gen_train.jsonl")]
-    train = fits(balance_length(balance_noul(raw, seed=args.seed), seed=args.seed), tok, args.max_tokens)
-    evals = fits(shuffle_options([e for d in args.src for e in load(f"{d}/gen_eval.jsonl")],
-                                 seed=args.seed), tok, args.max_tokens)
+    train = fits(
+        balance_length(balance_noul(raw, seed=args.seed), seed=args.seed), tok, args.max_tokens
+    )
+    evals = fits(
+        shuffle_options([e for d in args.src for e in load(f"{d}/gen_eval.jsonl")], seed=args.seed),
+        tok,
+        args.max_tokens,
+    )
     random.Random(args.seed).shuffle(train)
     if args.paraphrases:
         table = load_paraphrases(args.paraphrases)
         train = attach_paraphrases(train, table)
-        print(f"paraphrases attached to {sum(len(e.instruction_variants) > 1 for e in train):,} of "
-              f"{len(train):,} training rows")
+        print(
+            f"paraphrases attached to {sum(len(e.instruction_variants) > 1 for e in train):,} of "
+            f"{len(train):,} training rows"
+        )
         if args.pairs_out:
             pairs = paraphrase_pairs(evals, table)
             print(f"consistency eval: {len(pairs) // 2:,} eval rows, each with one paraphrase")
             write_jsonl(args.pairs_out, pairs)
-    print(f"train {len(train):,} rows (from {len(raw):,} kept; yes/no balanced per skill, "
-          f"answer-is-longest thinned to chance), eval {len(evals):,} rows (options shuffled)")
+    print(
+        f"train {len(train):,} rows (from {len(raw):,} kept; yes/no balanced per skill, "
+        f"answer-is-longest thinned to chance), eval {len(evals):,} rows (options shuffled)"
+    )
     write_jsonl(args.out, train)
     write_jsonl(args.eval_out, evals)
 

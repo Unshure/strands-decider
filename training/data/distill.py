@@ -16,14 +16,18 @@ Indices must not overlap.
         --teacher data/teacher_v5_qwen35-4b.jsonl \
         --append data/replay_v14_multistep.jsonl --out data/teacher_v20.jsonl
 """
+
 from __future__ import annotations
 
 import json
 from collections.abc import Iterable
 
 
-def agreeing(corpus: Iterable[dict], teacher: dict[int, list[float]],
-             kinds: tuple[str, ...] = ("noul", "choice")) -> list[dict]:
+def agreeing(
+    corpus: Iterable[dict],
+    teacher: dict[int, list[float]],
+    kinds: tuple[str, ...] = ("noul", "choice"),
+) -> list[dict]:
     """The teacher rows whose argmax is the gold label, for rows of the given kinds."""
     out = []
     for i, row in enumerate(corpus):
@@ -31,7 +35,9 @@ def agreeing(corpus: Iterable[dict], teacher: dict[int, list[float]],
         if p is None or row["kind"] not in kinds:
             continue
         if len(p) != len(row["options"]):
-            raise ValueError(f"row {i}: {len(p)} teacher probabilities for {len(row['options'])} options")
+            raise ValueError(
+                f"row {i}: {len(p)} teacher probabilities for {len(row['options'])} options"
+            )
         if max(range(len(p)), key=p.__getitem__) == row["label"]:
             out.append({"i": i, "probs": p})
     return out
@@ -40,7 +46,9 @@ def agreeing(corpus: Iterable[dict], teacher: dict[int, list[float]],
 def main(argv: list[str] | None = None) -> None:
     import argparse
 
-    ap = argparse.ArgumentParser(description="Teacher distributions where the teacher agrees with gold (v20).")
+    ap = argparse.ArgumentParser(
+        description="Teacher distributions where the teacher agrees with gold (v20)."
+    )
     ap.add_argument("--corpus", default="data/train_v5.jsonl")
     ap.add_argument("--teacher", default="data/teacher_v5_qwen35-4b.jsonl")
     ap.add_argument("--append", nargs="*", default=["data/replay_v14_multistep.jsonl"])
@@ -60,8 +68,10 @@ def main(argv: list[str] | None = None) -> None:
     with open(args.out, "w", encoding="utf-8") as fh:
         for r in rows:
             fh.write(json.dumps(r) + "\n")
-    print(f"{len(kept):,} of {len(teacher):,} teacher rows agree with gold (yes/no and choice); "
-          f"{len(rows) - len(kept):,} appended; {len(rows):,} written to {args.out}")
+    print(
+        f"{len(kept):,} of {len(teacher):,} teacher rows agree with gold (yes/no and choice); "
+        f"{len(rows) - len(kept):,} appended; {len(rows):,} written to {args.out}"
+    )
 
 
 if __name__ == "__main__":

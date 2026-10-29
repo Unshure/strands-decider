@@ -122,12 +122,7 @@ def render_question(
         pairs = [pairs[i] for i in option_order]
 
     block, block_spans = _option_block(pairs)
-    prefix = (
-        f'<question type="{kind}">\n'
-        f"{header}\n"
-        f"{instructions}\n"
-        f"<options>\n"
-    )
+    prefix = f'<question type="{kind}">\n{header}\n{instructions}\n<options>\n'
     text = prefix + block + "\n</options>\n</question>\n<answer>"
     base = len(prefix)
     return RenderedQuestion(

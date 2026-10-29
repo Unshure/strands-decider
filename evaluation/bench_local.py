@@ -112,16 +112,23 @@ def time_request(engine, req, reps: int):
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("checkpoint")
-    ap.add_argument("--device", action="append", help="repeatable; default mps if available else cpu")
+    ap.add_argument(
+        "--device", action="append", help="repeatable; default mps if available else cpu"
+    )
     ap.add_argument("--lengths", default="256,1024,2048,4000", help="state lengths in tokens")
     ap.add_argument("--questions", default="1,4,8,16")
     ap.add_argument("--reps", type=int, default=5)
     ap.add_argument("--warmup", type=int, default=2)
-    ap.add_argument("--dtype", choices=["checkpoint", "float32", "bfloat16", "float16"],
-                    default="checkpoint",
-                    help="cast the torso after loading (on CPU the engine already uses fp32)")
+    ap.add_argument(
+        "--dtype",
+        choices=["checkpoint", "float32", "bfloat16", "float16"],
+        default="checkpoint",
+        help="cast the torso after loading (on CPU the engine already uses fp32)",
+    )
     ap.add_argument("--out", default="bench_local.csv")
     args = ap.parse_args()
 
@@ -134,17 +141,25 @@ def main() -> int:
         t0 = time.perf_counter()
         engine = load_engine(args.checkpoint, device=device)
         if args.dtype != "checkpoint" and device == "mlx":
-            raise SystemExit("--dtype applies to torch devices; the MLX torso runs in the checkpoint's dtype")
+            raise SystemExit(
+                "--dtype applies to torch devices; the MLX torso runs in the checkpoint's dtype"
+            )
         if args.dtype != "checkpoint":
             # load_engine builds under inference_mode, so the cast must happen there too.
             with torch.inference_mode():
                 engine.model.torso.to(getattr(torch, args.dtype))
         load_s = time.perf_counter() - t0
         tok = engine.tok
-        dtype = (engine.model.config.torch_dtype if device == "mlx"
-                 else next(engine.model.torso.parameters()).dtype)
-        print(f"\n== {device}: loaded in {load_s:.1f}s, torch {torch.__version__}, "
-              f"threads {torch.get_num_threads()}, torso {dtype}", flush=True)
+        dtype = (
+            engine.model.config.torch_dtype
+            if device == "mlx"
+            else next(engine.model.torso.parameters()).dtype
+        )
+        print(
+            f"\n== {device}: loaded in {load_s:.1f}s, torch {torch.__version__}, "
+            f"threads {torch.get_num_threads()}, torso {dtype}",
+            flush=True,
+        )
 
         warm = SystemOneRequest(state=make_state(tok, 256), questions=make_questions(2))
         for _ in range(args.warmup):
@@ -167,12 +182,18 @@ def main() -> int:
                     if path == "prefix" and not engine.cfg.use_prefix_cache:
                         # The engine fell back to batched encoding: record it, don't
                         # report batched timings under the prefix label.
-                        print(f"   !! prefix cache disabled itself on {device}; row marked", flush=True)
+                        print(
+                            f"   !! prefix cache disabled itself on {device}; row marked",
+                            flush=True,
+                        )
                         path = "prefix-FELLBACK"
                     answers[path] = {n: a.choice for n, a in resp.answers.items()}
                     row = {
-                        "device": device, "dtype": str(dtype).removeprefix("torch."),
-                        "state_tokens": n_tok, "questions": k, "path": path,
+                        "device": device,
+                        "dtype": str(dtype).removeprefix("torch."),
+                        "state_tokens": n_tok,
+                        "questions": k,
+                        "path": path,
                         "input_tokens": resp.usage.input_tokens,
                         "median_ms": round(statistics.median(times), 1),
                         "p90_ms": round(pct(times, 0.9), 1),
@@ -181,8 +202,11 @@ def main() -> int:
                         "peak_mem_gib": round(peak_mem_gib(device), 2),
                     }
                     rows.append(row)
-                    print(f"   {n_tok:>5} tok  {k:>2} q  {path:<15} median {row['median_ms']:>9.1f} ms"
-                          f"  p90 {row['p90_ms']:>9.1f}  in-tok {row['input_tokens']:>6}", flush=True)
+                    print(
+                        f"   {n_tok:>5} tok  {k:>2} q  {path:<15} median {row['median_ms']:>9.1f} ms"
+                        f"  p90 {row['p90_ms']:>9.1f}  in-tok {row['input_tokens']:>6}",
+                        flush=True,
+                    )
                 if len(answers) == 2:
                     a, b = answers.values()
                     same = sum(a[n] == b[n] for n in a)
@@ -194,8 +218,20 @@ def main() -> int:
         if device == "mps":
             torch.mps.empty_cache()
 
-    fields = ["device", "dtype", "state_tokens", "questions", "path", "input_tokens", "median_ms",
-              "p90_ms", "min_ms", "reps", "peak_mem_gib", "same_answer"]
+    fields = [
+        "device",
+        "dtype",
+        "state_tokens",
+        "questions",
+        "path",
+        "input_tokens",
+        "median_ms",
+        "p90_ms",
+        "min_ms",
+        "reps",
+        "peak_mem_gib",
+        "same_answer",
+    ]
     with open(args.out, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()

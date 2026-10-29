@@ -157,7 +157,11 @@ def test_request_accepts_empty_state_and_structured_criteria():
                 "move": {
                     "type": "choice",
                     "instructions": "Best move?",
-                    "criteria": {"b8g8": {"uci": "b8g8", "san": "Qg8"}, "b8b7": "Qb7", "a1a2": None},
+                    "criteria": {
+                        "b8g8": {"uci": "b8g8", "san": "Qg8"},
+                        "b8b7": "Qb7",
+                        "a1a2": None,
+                    },
                 }
             },
         }
@@ -252,9 +256,17 @@ class _FakeTokenizer:
 
     pad_token = "<pad>"
 
-    def __call__(self, texts, padding=True, truncation=True, max_length=64,
-                 return_tensors=None, padding_side="right", add_special_tokens=True,
-                 return_offsets_mapping=False):
+    def __call__(
+        self,
+        texts,
+        padding=True,
+        truncation=True,
+        max_length=64,
+        return_tensors=None,
+        padding_side="right",
+        add_special_tokens=True,
+        return_offsets_mapping=False,
+    ):
         if isinstance(texts, str):
             texts = [texts]
         seqs = [[min(ord(c), 255) for c in t[:max_length]] for t in texts]
@@ -274,9 +286,7 @@ class _FakeTokenizer:
 
 
 def test_collator_label_binding_is_correct():
-    coll = SystemOneCollator(
-        _FakeTokenizer(), CollatorConfig(num_slots=8, seed=3), train=True
-    )
+    coll = SystemOneCollator(_FakeTokenizer(), CollatorConfig(num_slots=8, seed=3), train=True)
     ex = _choice_example()
     gold_name = ex.options[ex.label][0]
     for _ in range(30):
@@ -287,9 +297,7 @@ def test_collator_label_binding_is_correct():
 
 
 def test_collator_does_not_shuffle_in_eval_mode():
-    coll = SystemOneCollator(
-        _FakeTokenizer(), CollatorConfig(num_slots=8), train=False
-    )
+    coll = SystemOneCollator(_FakeTokenizer(), CollatorConfig(num_slots=8), train=False)
     ex = _choice_example()
     for _ in range(10):
         assert coll._option_order(ex) is None
@@ -322,8 +330,12 @@ def test_ordinal_smoothing_puts_mass_on_neighbours():
         train=True,
     )
     ex = Example(
-        kind="score", state="s", instructions="rate",
-        options=[["0", "a"], ["1", "b"], ["2", "c"]], label=1, task="unit",
+        kind="score",
+        state="s",
+        instructions="rate",
+        options=[["0", "a"], ["1", "b"], ["2", "c"]],
+        label=1,
+        task="unit",
     )
     dist = coll._target_distribution(ex, 1, 3, None)
     assert dist is not None
@@ -341,8 +353,12 @@ def test_ordinal_smoothing_at_rubric_edge():
         train=True,
     )
     ex = Example(
-        kind="score", state="s", instructions="rate",
-        options=[["0", "a"], ["1", "b"], ["2", "c"]], label=0, task="unit",
+        kind="score",
+        state="s",
+        instructions="rate",
+        options=[["0", "a"], ["1", "b"], ["2", "c"]],
+        label=0,
+        task="unit",
     )
     dist = coll._target_distribution(ex, 0, 3, None)
     assert dist[0].item() == pytest.approx(0.8)
@@ -361,15 +377,13 @@ def test_collator_rejects_more_options_than_slots():
 
 def test_example_rejects_out_of_range_label():
     with pytest.raises(ValueError):
-        Example(kind="choice", state="s", instructions="i",
-                options=[["a", ""], ["b", ""]], label=2)
+        Example(kind="choice", state="s", instructions="i", options=[["a", ""], ["b", ""]], label=2)
 
 
 def test_split_is_stratified_by_task():
-    examples = (
-        [Example("noul", "s", "i", [["false", ""], ["true", ""]], 0, task="big")] * 200
-        + [Example("noul", "s", "i", [["false", ""], ["true", ""]], 1, task="tiny")] * 4
-    )
+    examples = [Example("noul", "s", "i", [["false", ""], ["true", ""]], 0, task="big")] * 200 + [
+        Example("noul", "s", "i", [["false", ""], ["true", ""]], 1, task="tiny")
+    ] * 4
     train, val = split_examples(examples, val_fraction=0.1, seed=0)
     # The small task must survive into both halves rather than vanishing.
     assert any(e.task == "tiny" for e in train)
@@ -469,10 +483,13 @@ def test_sample_is_representative_not_a_prefix():
     """Corpora are grouped by task; a head slice evaluates one task and calls it overall."""
     from training.evaluate import sample_examples
 
-    grouped = (
-        [Example("noul", f"a{i}", "i", [["false", ""], ["true", ""]], 0, task="A") for i in range(500)]
-        + [Example("noul", f"b{i}", "i", [["false", ""], ["true", ""]], 1, task="B") for i in range(500)]
-    )
+    grouped = [
+        Example("noul", f"a{i}", "i", [["false", ""], ["true", ""]], 0, task="A")
+        for i in range(500)
+    ] + [
+        Example("noul", f"b{i}", "i", [["false", ""], ["true", ""]], 1, task="B")
+        for i in range(500)
+    ]
     picked = sample_examples(grouped, 200)
     tasks = {e.task for e in picked}
     assert tasks == {"A", "B"}, "sampling collapsed onto a single task"
@@ -609,8 +626,7 @@ def test_fit_temperature_by_kind_skips_thin_primitives():
     from training.evaluate import fit_temperature_by_kind
 
     examples = [
-        Example("noul", "s", "i", [["false", ""], ["true", ""]], 0, task="t")
-        for _ in range(10)
+        Example("noul", "s", "i", [["false", ""], ["true", ""]], 0, task="t") for _ in range(10)
     ]
     logits = torch.randn(10, 8)
     t = fit_temperature_by_kind(
@@ -638,9 +654,7 @@ def test_ece_and_nll_objectives_can_disagree():
         v[lab] += 3.0  # separable but noisy: confident and often, but not always, right
         rows.append(v)
         labels.append(lab)
-        examples.append(
-            Example("noul", "s", "i", [["false", ""], ["true", ""]], lab, task="t")
-        )
+        examples.append(Example("noul", "s", "i", [["false", ""], ["true", ""]], lab, task="t"))
     logits = torch.stack(rows)
     y = torch.tensor(labels)
     slots = torch.full((n,), 2)
@@ -658,8 +672,12 @@ def test_fit_temperature_rejects_unknown_objective():
     from training.evaluate import fit_temperature
 
     with pytest.raises(ValueError, match="nll"):
-        fit_temperature(torch.randn(4, 8), torch.zeros(4, dtype=torch.long),
-                        torch.full((4,), 2), objective="brier")
+        fit_temperature(
+            torch.randn(4, 8),
+            torch.zeros(4, dtype=torch.long),
+            torch.full((4,), 2),
+            objective="brier",
+        )
 
 
 def test_fit_temperature_ece_requires_examples():
@@ -667,8 +685,12 @@ def test_fit_temperature_ece_requires_examples():
     from training.evaluate import fit_temperature
 
     with pytest.raises(ValueError, match="examples"):
-        fit_temperature(torch.randn(4, 8), torch.zeros(4, dtype=torch.long),
-                        torch.full((4,), 2), objective="ece")
+        fit_temperature(
+            torch.randn(4, 8),
+            torch.zeros(4, dtype=torch.long),
+            torch.full((4,), 2),
+            objective="ece",
+        )
 
 
 # ---------------------------------------------------------------- instruction variants
@@ -676,8 +698,12 @@ def test_fit_temperature_ece_requires_examples():
 
 def _varied_example():
     return Example(
-        "choice", "s", "Which section does this belong to?",
-        [["a", ""], ["b", ""]], 0, task="t",
+        "choice",
+        "s",
+        "Which section does this belong to?",
+        [["a", ""], ["b", ""]],
+        0,
+        task="t",
         instruction_variants=["What is this about?", "Pick a section."],
     )
 
@@ -685,9 +711,7 @@ def _varied_example():
 def test_collator_samples_among_instruction_phrasings():
     """A head that keyed on the exact instruction string should be wrong most of
     the time -- the same argument that motivates option shuffling."""
-    coll = SystemOneCollator(
-        _FakeTokenizer(), CollatorConfig(num_slots=8, seed=1), train=True
-    )
+    coll = SystemOneCollator(_FakeTokenizer(), CollatorConfig(num_slots=8, seed=1), train=True)
     ex = _varied_example()
     seen = {coll._instruction(ex) for _ in range(200)}
     assert seen == set(ex.all_instructions())
@@ -710,9 +734,7 @@ def test_instruction_variation_can_be_disabled():
 
 
 def test_example_without_variants_is_unaffected():
-    coll = SystemOneCollator(
-        _FakeTokenizer(), CollatorConfig(num_slots=8, seed=1), train=True
-    )
+    coll = SystemOneCollator(_FakeTokenizer(), CollatorConfig(num_slots=8, seed=1), train=True)
     plain = Example("choice", "s", "only phrasing", [["a", ""], ["b", ""]], 0, task="t")
     assert coll._instruction(plain) is None
     assert plain.all_instructions() == ["only phrasing"]
@@ -827,14 +849,12 @@ def test_pointer_collator_emits_padded_option_indices():
     n_opts = [_choice_example().n_options, noul.n_options]
     assert batch["opt_idx"].shape == (2, max(n_opts))
     for row, k in zip(batch["opt_idx"].tolist(), n_opts, strict=True):
-        assert all(i >= 0 for i in row[:k])       # real positions
-        assert all(i == -1 for i in row[k:])      # padding
+        assert all(i >= 0 for i in row[:k])  # real positions
+        assert all(i == -1 for i in row[k:])  # padding
 
 
 def test_slot_collator_emits_no_option_indices():
-    coll = SystemOneCollator(
-        _FakeTokenizer(), CollatorConfig(num_slots=24), train=False
-    )
+    coll = SystemOneCollator(_FakeTokenizer(), CollatorConfig(num_slots=24), train=False)
     assert "opt_idx" not in coll([_choice_example()])
 
 
@@ -919,6 +939,8 @@ def test_collect_logits_masks_the_padded_columns():
             head_type = "pointer"
             max_length = 3072
 
+        torso = torch.nn.Module()  # no parameters: the CPU upcast has nothing to cast
+
         def eval(self):
             return self
 
@@ -931,8 +953,14 @@ def test_collect_logits_masks_the_padded_columns():
             return {"logits": torch.arange(k, dtype=torch.float32).expand(b, k)}
 
     exs = [
-        Example(kind="choice", state="s", instructions="q",
-                options=[[f"o{i}", ""] for i in range(n)], label=0, task="t")
+        Example(
+            kind="choice",
+            state="s",
+            instructions="q",
+            options=[[f"o{i}", ""] for i in range(n)],
+            label=0,
+            task="t",
+        )
         for n in (2, 5, 3, 2)
     ]
     logits, _, slots, _ = collect_logits(_Stub(), exs, device="cpu", batch_size=4)
@@ -952,8 +980,14 @@ def test_teacher_targets_follow_option_shuffling():
     )
     slots = set()
     for _ in range(20):
-        ex = Example(kind="choice", state="Arsenal won 3-1.", instructions="Which section?",
-                     options=[[n, ""] for n in names], label=1, task="t")
+        ex = Example(
+            kind="choice",
+            state="Arsenal won 3-1.",
+            instructions="Which section?",
+            options=[[n, ""] for n in names],
+            label=1,
+            task="t",
+        )
         ex.teacher = teacher
         out = coll([ex])
         slot_gold = int(out["labels"][0])  # where the shuffle put the gold option

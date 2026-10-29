@@ -22,6 +22,7 @@ distribution rather than a faster version of the same one.
 The longest batch is yielded first, so a sequence that does not fit in memory fails at
 step 1 instead of three hours in.
 """
+
 from __future__ import annotations
 
 import random
@@ -76,8 +77,8 @@ class LengthGroupedBatchSampler(Sampler[list[int]]):
         span = self.batch_size * self.mega
         out: list[list[int]] = []
         for start in range(0, len(order), span):
-            chunk = sorted(order[start:start + span], key=lambda i: -self.lengths[i])
-            out += [chunk[k:k + self.batch_size] for k in range(0, len(chunk), self.batch_size)]
+            chunk = sorted(order[start : start + span], key=lambda i: -self.lengths[i])
+            out += [chunk[k : k + self.batch_size] for k in range(0, len(chunk), self.batch_size)]
 
         # Only the final megabatch can leave a short batch; dropping it matches the
         # DataLoader(drop_last=True) this replaces.

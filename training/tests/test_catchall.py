@@ -1,4 +1,5 @@
 """Catch-all option rows (training/data/catchall.py). No GPU."""
+
 import random
 
 from training.data.catchall import DESCRIPTION, NAMES, build, transform
@@ -6,8 +7,14 @@ from training.data.format import Example
 
 
 def ex(label=1, task="ag_news", names=("world", "sports", "business", "tech")):
-    return Example(kind="choice", state="s", instructions="Which topic?",
-                   options=[[n, f"about {n}"] for n in names], label=label, task=task)
+    return Example(
+        kind="choice",
+        state="s",
+        instructions="Which topic?",
+        options=[[n, f"about {n}"] for n in names],
+        label=label,
+        task=task,
+    )
 
 
 def test_absent_removes_gold_and_makes_catchall_right():
@@ -38,4 +45,8 @@ def test_present_stays_within_max_options():
     names = tuple(f"c{i}" for i in range(24))
     for label in (0, 5, 23):
         r = transform(ex(label=label, names=names), "present", random.Random(label), max_options=24)
-        assert len(r.options) == 24 and r.options[r.label][0] == f"c{label}" and r.options[-1][0] in NAMES
+        assert (
+            len(r.options) == 24
+            and r.options[r.label][0] == f"c{label}"
+            and r.options[-1][0] in NAMES
+        )

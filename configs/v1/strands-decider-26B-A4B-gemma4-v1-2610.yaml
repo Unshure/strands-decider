@@ -1,0 +1,99 @@
+# strands-decider-26B-A4B-gemma4-v1-2610: the training config of the released model, seed 0.
+# The release is a soup of three training runs of this config, seeds 0, 1 and 2 (the three
+# configs differ only in `seed`), calibrated after the soup. Research name of the recipe:
+# g26-26b-a4b-code. The four Gemma 4 v1 configs differ only in base_model and output_dir.
+# evaluation/results.md, section "Gemma 4 v1", has the seeds and the soup.
+#
+# The data is hobson-v21's (configs/experiments/v21b.yaml, 123,339 rows) plus 12,263
+# code-task rows, 135,602 rows. The teacher is Qwen3.5-4B, through v21's teacher file. The
+# anchor is the released v19. Inputs, and where each comes from:
+#   data/train_v5.jsonl, data/multistep_v14.jsonl   `training/recipe.sh build fetch multistep`
+#                                (both recorded in data/SHA256SUMS)
+#   data/generated_v16p.jsonl, data/generated_v18p.jsonl   `recipe.sh generated`, from the
+#                                committed data/synthetic/ rows and paraphrases
+#   data/adequacy_hs2.jsonl      `recipe.sh fetch adequacy`, from the HelpSteer2 download
+#   data/adequacy_gen.jsonl      `recipe.sh adequacy`, copied from data/synthetic/
+#   data/code_v27.jsonl          NOT REPRODUCIBLE from this repository: the code-task rows
+#                                (data/sources.md, "Code-task rows") are built outside it and
+#                                are not committed. They come last in train_files and have
+#                                gold labels only.
+#   data/teacher_v20.jsonl       `recipe.sh distill`, from the committed Qwen3.5-4B
+#                                distributions and v14's replay distributions (data/synthetic/)
+#   checkpoints/v19-ref          the released v19: `hf download
+#                                StrandsAgents/strands-decider-2B-hobson-v19 --local-dir
+#                                checkpoints/v19-ref`. The run read the same
+#                                hobson_config.json and LoRA adapter (sha256 checked); its
+#                                head was slot_head.pt, which the Hub holds as head.safetensors.
+# sha256 of the files the run read that data/SHA256SUMS does not record:
+#   4b7f9ac6ad610923bd6e449a8e536cd09b8903e93d14ef128f2e7f359f8c029a  data/generated_v16p.jsonl
+#   c2ac8f719191194078ab71206c3fe243ec8ef46356b097b5132525042694b978  data/generated_v18p.jsonl
+#   2a84d4f555ebd4cb136db2fcd2d09634531e8b56ec36f7015a208c0f8dd38f6f  data/adequacy_hs2.jsonl
+#   a1b7397b76192cdca0f1a6e479dd1038d7eccadf732e625bf7aa3985e2323e06  data/code_v27.jsonl
+#   c6048ddc21c4cc347980b38d0561f8dd849daca42c970f9103ea482681ee0c5b  data/teacher_v20.jsonl
+#
+# Rerun, given data/code_v27.jsonl (8x H100; training/README.md, "The v1 release recipes"):
+#   training/recipe.sh build fetch multistep generated adequacy distill
+#   hf download StrandsAgents/strands-decider-2B-hobson-v19 --local-dir checkpoints/v19-ref
+#   C=configs/v1/strands-decider-26B-A4B-gemma4-v1-2610.yaml
+#   for s in 0 1 2; do
+#     sed "s/^seed: 0$/seed: $s/" $C > /tmp/26b-a4b-s$s.yaml
+#     NGPU=8 TRAIN_CONFIG=/tmp/26b-a4b-s$s.yaml CKPT=checkpoints/26b-a4b-s$s training/recipe.sh train
+#   done
+#   python -m training.soup checkpoints/26b-a4b-s0 checkpoints/26b-a4b-s1 checkpoints/26b-a4b-s2 --out checkpoints/26b-a4b
+#   python -m training.evaluate calibrate checkpoints/26b-a4b --data data/holdout_v5_norule.jsonl
+#   CKPT=checkpoints/26b-a4b training/recipe.sh eval
+#
+# Changed from the run's file: the comments, and output_dir (the run's was
+# checkpoints/strands-decider-26B-A4B-gemma4-v2-2610; `recipe.sh train` writes to $CKPT anyway).
+# The file had no host-specific paths: every path is relative to the repository root.
+
+train_files: ["data/train_v5.jsonl", "data/multistep_v14.jsonl", "data/generated_v16p.jsonl",
+              "data/generated_v18p.jsonl", "data/adequacy_hs2.jsonl", "data/adequacy_gen.jsonl",
+              "data/code_v27.jsonl"]  # code rows LAST, so the teacher_v20 indices still match
+val_fraction: 0.03
+
+base_model: "google/gemma-4-26B-A4B-it"  # Hub main 4d7ae49 on 2026-10-06; the loader does not pin it
+num_slots: 24           # must match `data build --max-options`; also the KL reference width
+head_type: "pointer"    # scores each option from its own hidden state; see modeling.PointerHead
+pointer_dim: 256
+head_init: "random"     # "lm_head" seeding applies to the slot head only
+kl_frozen_weight: 0.3   # KL(frozen || student) over the option-number readout
+kl_frozen_reference: "checkpoints/v19-ref"  # the released v19, at temperature 1 (header)
+# The frozen 4B's distributions on the short-task rows where it agrees with the gold label
+# (indices into train_v5), and v14's own on the multi-step rows (offset past train_v5);
+# everything after them carries no teacher.
+teacher_file: "data/teacher_v20.jsonl"
+teacher_weight: 1.0
+head_dropout: 0.05
+max_length: 4096
+force_bos: true         # the -it tokenizer adds no <bos>; Gemma reads text badly without it
+
+use_lora: true
+lora_r: 16
+lora_alpha: 32
+# Attention and MLP projections (Gemma 4 has no recurrent layers). The 26B-A4B's 128 experts are
+# 3-D tensors, not modules: LoRA reaches its attention and dense MLP, not the experts.
+lora_targets: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+freeze_torso: false     # true = head-only training (much weaker, but very cheap)
+
+epochs: 1
+micro_batch_size: 8
+grad_accum: 4           # effective batch 32
+lr: 0.0001              # LoRA
+head_lr: 0.001          # randomly-initialised head needs a bigger step
+weight_decay: 0.01
+warmup_ratio: 0.03
+max_grad_norm: 1.0
+gradient_checkpointing: true   # Gemma needs it at micro-batch 8
+
+shuffle_options: true   # the whole point -- do not turn this off
+group_by_length: true   # on: ~2k-token documents among ~250-token rows would otherwise
+                        # pad most batches; it changes batch composition, not content
+ordinal_smoothing: 0.1
+reverse_score_prob: 0.5
+
+output_dir: "checkpoints/strands-decider-26B-A4B-gemma4-v1-2610-s0"
+seed: 0
+log_every: 20
+eval_every: 500
+precompute_frozen_kl: true  # kl_frozen_reference needs it; otherwise speed only

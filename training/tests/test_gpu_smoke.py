@@ -17,9 +17,7 @@ import torch
 
 from training.data.format import Example
 
-pytestmark = pytest.mark.skipif(
-    not torch.cuda.is_available(), reason="needs a CUDA device"
-)
+pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA device")
 
 SMALL_BASE = os.environ.get("STRANDS_DECIDER_TEST_BASE", "Qwen/Qwen3-0.6B-Base")
 
@@ -75,8 +73,11 @@ def fp32_model():
     from strands_decider.modeling import StrandsDeciderConfig, StrandsDeciderModel
 
     cfg = StrandsDeciderConfig(
-        base_model=SMALL_BASE, num_slots=8, max_length=512,
-        use_lora=False, torch_dtype="float32",
+        base_model=SMALL_BASE,
+        num_slots=8,
+        max_length=512,
+        use_lora=False,
+        torch_dtype="float32",
     )
     return StrandsDeciderModel.from_pretrained_base(cfg).to("cuda").eval()
 
@@ -193,8 +194,12 @@ def test_lora_checkpoint_save_load_roundtrip(tmp_path):
     from strands_decider.modeling import StrandsDeciderConfig, StrandsDeciderModel
 
     cfg = StrandsDeciderConfig(
-        base_model=SMALL_BASE, num_slots=8, max_length=512,
-        use_lora=True, lora_r=4, torch_dtype="float32",
+        base_model=SMALL_BASE,
+        num_slots=8,
+        max_length=512,
+        use_lora=True,
+        lora_r=4,
+        torch_dtype="float32",
     )
     model = StrandsDeciderModel.from_pretrained_base(cfg)
 
@@ -227,8 +232,11 @@ def test_temperature_is_applied_on_load(tmp_path):
     from strands_decider.schema import ChoiceQuestion, SystemOneRequest
 
     cfg = StrandsDeciderConfig(
-        base_model=SMALL_BASE, num_slots=8, max_length=512,
-        use_lora=False, torch_dtype="float32",
+        base_model=SMALL_BASE,
+        num_slots=8,
+        max_length=512,
+        use_lora=False,
+        torch_dtype="float32",
     )
     model = StrandsDeciderModel.from_pretrained_base(cfg)
     ckpt = str(tmp_path / "ckpt")
@@ -325,8 +333,10 @@ def test_chunking_close_enough_in_bf16(model):
 
 def _long_state(n_chars: int = 12000) -> str:
     """A policy-document-sized state, like JevBench's long_policy family."""
-    clause = ("Clause {i}: refunds require a receipt issued within 30 days, unless the "
-              "item was purchased on promotion, in which case store credit applies. ")
+    clause = (
+        "Clause {i}: refunds require a receipt issued within 30 days, unless the "
+        "item was purchased on promotion, in which case store credit applies. "
+    )
     out = []
     i = 0
     while sum(len(x) for x in out) < n_chars:

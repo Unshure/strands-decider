@@ -35,21 +35,45 @@ from strands_decider.schema import (  # noqa: E402
     SystemOneRequest,
 )
 
-LORA_TARGETS = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj",
-                "in_proj_qkv", "in_proj_z", "in_proj_a", "in_proj_b", "out_proj"]
-POLICY = ("Loans run 21 days and renew twice online unless another patron holds the item. "
-          "Accounts with fines above ten dollars cannot renew until the fine is paid. ")
+LORA_TARGETS = [
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "gate_proj",
+    "up_proj",
+    "down_proj",
+    "in_proj_qkv",
+    "in_proj_z",
+    "in_proj_a",
+    "in_proj_b",
+    "out_proj",
+]
+POLICY = (
+    "Loans run 21 days and renew twice online unless another patron holds the item. "
+    "Accounts with fines above ten dollars cannot renew until the fine is paid. "
+)
 QUESTIONS = {
-    "team": ChoiceQuestion(instructions="Which team should handle this?",
-                           criteria={"circulation": "renewals and holds", "billing": "fines",
-                                     "reference": "research help"}),
+    "team": ChoiceQuestion(
+        instructions="Which team should handle this?",
+        criteria={
+            "circulation": "renewals and holds",
+            "billing": "fines",
+            "reference": "research help",
+        },
+    ),
     "urgent": NoulQuestion(instructions="Does the patron convey urgency?"),
-    "mood": ScoreQuestion(instructions="How frustrated is the patron?",
-                          criteria=["calm", "annoyed", "angry"]),
+    "mood": ScoreQuestion(
+        instructions="How frustrated is the patron?", criteria=["calm", "annoyed", "angry"]
+    ),
 }
 REQUESTS = [  # one question (the whole-prompt path) and several (the shared-prefix path)
-    SystemOneRequest(state=POLICY + "Can I renew the cookbook?", questions={"team": QUESTIONS["team"]}),
-    SystemOneRequest(state=POLICY * 6 + "My renewal failed and I leave Friday!", questions=QUESTIONS),
+    SystemOneRequest(
+        state=POLICY + "Can I renew the cookbook?", questions={"team": QUESTIONS["team"]}
+    ),
+    SystemOneRequest(
+        state=POLICY * 6 + "My renewal failed and I leave Friday!", questions=QUESTIONS
+    ),
 ]
 
 
@@ -58,29 +82,48 @@ def _tokenizer():
     from tokenizers import Tokenizer, models, pre_tokenizers
     from transformers import PreTrainedTokenizerFast
 
-    texts = [render_state(r.state) for r in REQUESTS] + [render_question(q).text for q in QUESTIONS.values()]
+    texts = [render_state(r.state) for r in REQUESTS] + [
+        render_question(q).text for q in QUESTIONS.values()
+    ]
     words = {w for text in texts for w, _ in pre_tokenizers.Whitespace().pre_tokenize_str(text)}
     vocab = {w: i for i, w in enumerate(["<pad>", "<eos>", "<unk>", *sorted(words)])}
     tok = Tokenizer(models.WordLevel(vocab, unk_token="<unk>"))
     tok.pre_tokenizer = pre_tokenizers.Whitespace()
-    return PreTrainedTokenizerFast(tokenizer_object=tok, pad_token="<pad>", eos_token="<eos>",
-                                   unk_token="<unk>")
+    return PreTrainedTokenizerFast(
+        tokenizer_object=tok, pad_token="<pad>", eos_token="<eos>", unk_token="<unk>"
+    )
 
 
 def _checkpoint(tmp_path, head_type, torch_dtype="float32"):
     tok = _tokenizer()
     torch.manual_seed(0)
     base_cfg = transformers.Qwen3_5TextConfig(
-        vocab_size=len(tok), hidden_size=64, intermediate_size=128, num_hidden_layers=4,
-        num_attention_heads=4, num_key_value_heads=2, head_dim=16, linear_num_key_heads=2,
+        vocab_size=len(tok),
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=16,
+        linear_num_key_heads=2,
         # mlx-lm's Gated DeltaNet kernel spreads a key head over 32 lanes: Dk >= 32.
-        linear_num_value_heads=4, linear_key_head_dim=32, linear_value_head_dim=16,
-        layer_types=["linear_attention"] * 3 + ["full_attention"])
+        linear_num_value_heads=4,
+        linear_key_head_dim=32,
+        linear_value_head_dim=16,
+        layer_types=["linear_attention"] * 3 + ["full_attention"],
+    )
     base = tmp_path / "base"
     transformers.Qwen3_5ForCausalLM(base_cfg).save_pretrained(base)
-    cfg = StrandsDeciderConfig(base_model=str(base), head_type=head_type, pointer_dim=16,
-                               max_length=512, torch_dtype=torch_dtype, lora_r=4, lora_alpha=8,
-                               lora_targets=LORA_TARGETS)
+    cfg = StrandsDeciderConfig(
+        base_model=str(base),
+        head_type=head_type,
+        pointer_dim=16,
+        max_length=512,
+        torch_dtype=torch_dtype,
+        lora_r=4,
+        lora_alpha=8,
+        lora_targets=LORA_TARGETS,
+    )
     torso = transformers.Qwen3_5ForCausalLM.from_pretrained(base).model
     model = StrandsDeciderModel(cfg, torso, tok)
     model.attach_lora()
@@ -116,7 +159,9 @@ def test_mlx_answers_as_torch_does(engines, request_index, device):
     request = REQUESTS[request_index]
     expected = torch_engine.evaluate(request)
     previous = mx.default_device()
-    mx.set_default_device(getattr(mx, device))  # mlx-lm picks its Metal kernel by the default device
+    mx.set_default_device(
+        getattr(mx, device)
+    )  # mlx-lm picks its Metal kernel by the default device
     try:
         got = mlx_engine.evaluate(request)
     finally:
@@ -174,32 +219,47 @@ def test_the_adapter_is_merged_into_the_mlx_weights(engines):
         if not name.endswith(".lora_A.weight"):
             continue
         stem = name.removeprefix("base_model.model.").removesuffix(".lora_A.weight")
-        want = base[f"model.{stem}.weight"] + 2.0 * adapter[name.replace("lora_A", "lora_B")] @ lora_a
+        want = (
+            base[f"model.{stem}.weight"] + 2.0 * adapter[name.replace("lora_A", "lora_B")] @ lora_a
+        )
         have = torch.tensor(merged[f"{stem}.weight"].tolist())
         torch.testing.assert_close(have, want, atol=1e-6, rtol=1e-6)
         checked += 1
     assert checked == sum(1 for k in adapter if k.endswith(".lora_A.weight"))
-    assert any(".linear_attn.in_proj_qkv." in k for k in adapter)  # DeltaNet projections are merged too
+    assert any(
+        ".linear_attn.in_proj_qkv." in k for k in adapter
+    )  # DeltaNet projections are merged too
 
 
 def _adapter(path, tensors, **config):
     path.mkdir(parents=True, exist_ok=True)
     (path / "adapter_config.json").write_text(json.dumps({"r": 4, "lora_alpha": 8, **config}))
-    mx.save_safetensors(str(path / "adapter_model.safetensors"),
-                        {name: mx.zeros((4, 4)) for name in tensors})
+    mx.save_safetensors(
+        str(path / "adapter_model.safetensors"), {name: mx.zeros((4, 4)) for name in tensors}
+    )
     return str(path)
 
 
-PAIR = ["base_model.model.layers.0.mlp.up_proj.lora_A.weight",
-        "base_model.model.layers.0.mlp.up_proj.lora_B.weight"]
+PAIR = [
+    "base_model.model.layers.0.mlp.up_proj.lora_A.weight",
+    "base_model.model.layers.0.mlp.up_proj.lora_B.weight",
+]
 
 
-@pytest.mark.parametrize(("tensors", "config", "named"), [
-    ([*PAIR, "base_model.model.embed_tokens.lora_embedding_A"], {}, "lora_embedding_A"),
-    ([*PAIR, "base_model.model.layers.0.mlp.up_proj.lora_magnitude_vector"], {}, "lora_magnitude_vector"),
-    (PAIR[:1], {}, "lora_B"),
-    (PAIR, {"rank_pattern": {"up_proj": 8}}, "rank_pattern"),
-], ids=["embedding-lora", "dora", "unpaired", "rank-pattern"])
+@pytest.mark.parametrize(
+    ("tensors", "config", "named"),
+    [
+        ([*PAIR, "base_model.model.embed_tokens.lora_embedding_A"], {}, "lora_embedding_A"),
+        (
+            [*PAIR, "base_model.model.layers.0.mlp.up_proj.lora_magnitude_vector"],
+            {},
+            "lora_magnitude_vector",
+        ),
+        (PAIR[:1], {}, "lora_B"),
+        (PAIR, {"rank_pattern": {"up_proj": 8}}, "rank_pattern"),
+    ],
+    ids=["embedding-lora", "dora", "unpaired", "rank-pattern"],
+)
 def test_an_adapter_the_merge_cannot_represent_is_refused(tmp_path, tensors, config, named):
     from strands_decider.mlx_engine import merge_lora
 
@@ -207,7 +267,9 @@ def test_an_adapter_the_merge_cannot_represent_is_refused(tmp_path, tensors, con
         merge_lora(object(), _adapter(tmp_path / "lora", tensors, **config), "model.")
 
 
-@pytest.mark.filterwarnings("ignore:Setting `save_embedding_layers`:UserWarning")  # PEFT, saving the fixture
+@pytest.mark.filterwarnings(
+    "ignore:Setting `save_embedding_layers`:UserWarning"
+)  # PEFT, saving the fixture
 def test_a_checkpoint_with_an_embedding_lora_does_not_load_on_mlx(tmp_path, monkeypatch):
     monkeypatch.setattr(sys.modules[__name__], "LORA_TARGETS", [*LORA_TARGETS, "embed_tokens"])
     path = _checkpoint(tmp_path, "pointer")
@@ -218,10 +280,56 @@ def test_a_checkpoint_with_an_embedding_lora_does_not_load_on_mlx(tmp_path, monk
 def test_a_bf16_checkpoint_answers_from_another_thread(tmp_path):
     # The server evaluates on a thread pool. The base is fp32 here, so loading casts the torso
     # to bf16, and a cast left lazy belongs to the loading thread's stream.
-    engine = load_engine(str(_checkpoint(tmp_path, "pointer", torch_dtype="bfloat16")), device="mlx")
+    engine = load_engine(
+        str(_checkpoint(tmp_path, "pointer", torch_dtype="bfloat16")), device="mlx"
+    )
     with ThreadPoolExecutor(1) as pool:
         response = pool.submit(engine.evaluate, REQUESTS[1]).result()
     assert set(response.answers) == set(QUESTIONS)
+
+
+def test_every_mlx_evaluation_runs_on_the_loading_thread(engines):
+    # Gemma4 (and MLX in general) binds Metal streams to the loading thread. The engine
+    # owns a single-worker executor so cross-thread submissions all land on that one
+    # worker, regardless of which caller thread invoked evaluate().
+    import threading as _threading
+
+    _, mlx_engine, _ = engines
+    seen: list[int] = []
+    original = mlx_engine._decoder
+
+    class _Spy:
+        def __call__(self, *args, **kwargs):
+            seen.append(_threading.get_ident())
+            return original(*args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(original, name)
+
+    mlx_engine._decoder = _Spy()
+    try:
+        with ThreadPoolExecutor(3) as pool:
+            futures = [pool.submit(mlx_engine.evaluate, REQUESTS[0]) for _ in range(3)]
+            for future in futures:
+                future.result()
+    finally:
+        mlx_engine._decoder = original
+    assert seen, "the decoder was never called"
+    assert len(set(seen)) == 1, f"evaluations ran on {len(set(seen))} threads: {seen}"
+    assert _threading.get_ident() not in seen, "evaluate ran on the calling thread"
+
+
+def test_closing_the_engine_shuts_down_its_worker(tmp_path):
+    engine = load_engine(str(_checkpoint(tmp_path)), device="mlx")
+    engine.close()
+    with pytest.raises(RuntimeError):
+        engine.evaluate(REQUESTS[0])
+
+
+def test_torch_engines_do_not_grow_an_mlx_executor(tmp_path):
+    engine = load_engine(str(_checkpoint(tmp_path)), device="cpu")
+    assert not hasattr(engine, "_executor")
+    assert not hasattr(engine, "close")
 
 
 def test_mlx_loads_the_base_at_the_revision_in_provenance(tmp_path, monkeypatch):

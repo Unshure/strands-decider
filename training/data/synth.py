@@ -20,6 +20,7 @@ Surface form is varied on purpose. RuleTaker transferred inside its own family a
 nowhere else (see v5), and its narrow templated surface is the best explanation we
 have for why.
 """
+
 from __future__ import annotations
 
 import calendar
@@ -33,7 +34,7 @@ from typing import Any
 
 @dataclass
 class Item:
-    kind: str                      # noul | choice | score
+    kind: str  # noul | choice | score
     state: str
     instructions: str
     options: list[list[str]]
@@ -51,11 +52,29 @@ class Item:
 # --------------------------------------------------------------------------
 # Surface variation. Drawn per item so no two documents read the same way.
 # --------------------------------------------------------------------------
-ORGS = ["Calder & Voss", "Meridian Foundry", "Thistlewood Group", "Okonjo Analytics",
-        "Braunstein Rail", "Ferrante Textiles", "Nakagawa Logistics", "Ravensmere Ltd",
-        "Quillon Systems", "Ashgrove Dairy", "Petrosyan Marine", "Delacroix Optics"]
-DOCKIND = ["OPERATING PROCEDURE", "INTERNAL STANDARD", "CONTROL NOTE", "SCHEDULE",
-           "WORKING RULE", "DESK INSTRUCTION", "POLICY EXTRACT"]
+ORGS = [
+    "Calder & Voss",
+    "Meridian Foundry",
+    "Thistlewood Group",
+    "Okonjo Analytics",
+    "Braunstein Rail",
+    "Ferrante Textiles",
+    "Nakagawa Logistics",
+    "Ravensmere Ltd",
+    "Quillon Systems",
+    "Ashgrove Dairy",
+    "Petrosyan Marine",
+    "Delacroix Optics",
+]
+DOCKIND = [
+    "OPERATING PROCEDURE",
+    "INTERNAL STANDARD",
+    "CONTROL NOTE",
+    "SCHEDULE",
+    "WORKING RULE",
+    "DESK INSTRUCTION",
+    "POLICY EXTRACT",
+]
 HEADSTYLE = ["=" * 60, "-" * 60, "", "* * *"]
 
 
@@ -74,14 +93,15 @@ def _header(rng: random.Random, title: str) -> str:
     return "\n".join(lines)
 
 
-def _shuffled(rng: random.Random, correct: str, wrong: list[tuple[str, str]],
-              describe: Callable[[str], str]) -> tuple[list[list[str]], int, list[str]]:
+def _shuffled(
+    rng: random.Random, correct: str, wrong: list[tuple[str, str]], describe: Callable[[str], str]
+) -> tuple[list[list[str]], int, list[str]]:
     """Build an option list, shuffle it, and report which error each option encodes."""
     entries = [(correct, "correct", describe(correct))]
     seen = {correct}
     for val, err in wrong:
-        if val in seen:          # an error that happens to land on the right answer
-            continue             # would make the item unanswerable -- drop it
+        if val in seen:  # an error that happens to land on the right answer
+            continue  # would make the item unanswerable -- drop it
         seen.add(val)
         entries.append((val, err, describe(val)))
     rng.shuffle(entries)
@@ -115,11 +135,11 @@ def gen_threshold(rng: random.Random) -> Item:
             answer = d
         if naive_answer is None and naive_run >= trigger:
             naive_answer = d
-    if answer is None:                                  # ensure the rule can fire
+    if answer is None:  # ensure the rule can fire
         return gen_threshold(rng)
     assert naive_answer is not None  # naive_run >= run, so it fires no later than answer
 
-    strict = None                                       # '>' instead of '>='
+    strict = None  # '>' instead of '>='
     run2 = 0.0
     for d, amt, cat in rows:
         if cat == counted:
@@ -145,10 +165,17 @@ def gen_threshold(rng: random.Random) -> Item:
     wrong.append((nxt.isoformat(), "off_by_one_day"))
 
     options, label, errs = _shuffled(
-        rng, answer.isoformat(), wrong, lambda v: f"the alert is raised at the end of {v}")
-    return Item("choice", state, "On which date is the alert raised?", options, label,
-                "syn_threshold", {"rule": "threshold", "errors": errs,
-                                  "edge": "exclusions"})
+        rng, answer.isoformat(), wrong, lambda v: f"the alert is raised at the end of {v}"
+    )
+    return Item(
+        "choice",
+        state,
+        "On which date is the alert raised?",
+        options,
+        label,
+        "syn_threshold",
+        {"rule": "threshold", "errors": errs, "edge": "exclusions"},
+    )
 
 
 # --------------------------------------------------------------------------
@@ -214,13 +241,21 @@ def gen_units(rng: random.Random) -> Item:
         f"within the permit.\n\n  COMPONENT           MASS\n{listed}\n"
     )
     return Item(
-        "noul", state,
+        "noul",
+        state,
         f"Is consignment loaded mass within the permitted {limit} kg?",
-        [["false", "the loaded mass exceeds the permit"],
-         ["true", "the loaded mass is within the permit"]],
-        1 if ok else 0, "syn_units",
-        {"rule": "units", "edge": f"round_{rounding}",
-         "optional_included": include_optional, "margin_kg": round(final - limit, 2)},
+        [
+            ["false", "the loaded mass exceeds the permit"],
+            ["true", "the loaded mass is within the permit"],
+        ],
+        1 if ok else 0,
+        "syn_units",
+        {
+            "rule": "units",
+            "edge": f"round_{rounding}",
+            "optional_included": include_optional,
+            "margin_kg": round(final - limit, 2),
+        },
     )
 
 
@@ -264,12 +299,21 @@ def gen_window(rng: random.Random) -> Item:
         f"  Event date        : {event.isoformat()}\n"
     )
     return Item(
-        "noul", state, "Did the event fall within the cover period?",
-        [["false", "the event fell outside the cover period"],
-         ["true", "the event fell within the cover period"]],
-        1 if inside else 0, "syn_window",
-        {"rule": "window", "edge": "month_end_clamp" if clamped else "plain",
-         "inclusive_end": inclusive, "offset_days": offset},
+        "noul",
+        state,
+        "Did the event fall within the cover period?",
+        [
+            ["false", "the event fell outside the cover period"],
+            ["true", "the event fell within the cover period"],
+        ],
+        1 if inside else 0,
+        "syn_window",
+        {
+            "rule": "window",
+            "edge": "month_end_clamp" if clamped else "plain",
+            "inclusive_end": inclusive,
+            "offset_days": offset,
+        },
     )
 
 
@@ -335,11 +379,16 @@ def gen_bands(rng: random.Random) -> Item:
         wrong.append((names[idx + 1], "band_off_by_one_high"))
     if idx:
         wrong.append((names[idx - 1], "band_off_by_one_low"))
-    options, label, errs = _shuffled(
-        rng, answer, wrong, lambda v: f"authorise at the {v} level")
-    return Item("choice", state, "Which authorisation level applies to this request?",
-                options, label, "syn_bands",
-                {"rule": "bands", "errors": errs, "edge": "aggregation"})
+    options, label, errs = _shuffled(rng, answer, wrong, lambda v: f"authorise at the {v} level")
+    return Item(
+        "choice",
+        state,
+        "Which authorisation level applies to this request?",
+        options,
+        label,
+        "syn_bands",
+        {"rule": "bands", "errors": errs, "edge": "aggregation"},
+    )
 
 
 # --------------------------------------------------------------------------
@@ -359,20 +408,21 @@ def gen_verify(rng: random.Random) -> Item:
 
     # Half the responses are correct. Drawing uniformly over the fault types made
     # 80% of items "does not satisfy", which a model can exploit without reading.
-    fault = "none" if rng.random() < 0.5 else rng.choice(
-        ["arithmetic", "precision", "order", "sign"])
+    fault = (
+        "none" if rng.random() < 0.5 else rng.choice(["arithmetic", "precision", "order", "sign"])
+    )
     if fault == "none":
         shown = truth
     elif fault == "arithmetic":
         shown = round(truth + rng.choice([-1, 1]) * round(rng.uniform(0.5, 4), dp), dp)
     elif fault == "precision":
         shown = truth
-    elif fault == "order":                    # adds first, then applies the reduction
+    elif fault == "order":  # adds first, then applies the reduction
         shown = round((a + added) * (1 - pct / 100), dp)
-    else:                                     # applies the percentage as a gain
+    else:  # applies the percentage as a gain
         shown = round(a * (1 + pct / 100) + added, dp)
-    if fault in ("arithmetic", "order", "sign") and abs(shown - truth) < 10 ** -dp:
-        return gen_verify(rng)                # the fault made no difference here
+    if fault in ("arithmetic", "order", "sign") and abs(shown - truth) < 10**-dp:
+        return gen_verify(rng)  # the fault made no difference here
 
     # Render to the requested precision. Python drops trailing zeros, so a correct
     # 230.130 printed as "230.13" silently failed the "to 3 decimal places" half of
@@ -383,19 +433,27 @@ def gen_verify(rng: random.Random) -> Item:
     # earlier version had the wrong-order response announce "applied the addition
     # first", which let v7 score 0.941 on that split by reading the prose instead of
     # doing any arithmetic -- a surface cue, not a reasoning test.
-    steps = (f"Reduction: {pct}% of {a} = {reduction}. "
-             f"Starting quantity {a}, final quantity {shown:.{shown_dp}f}.")
-    request = (f"A vessel holds {a} units. Its contents are reduced by {pct}%, after "
-               f"which {added} units are added. Report the final quantity to {dp} "
-               f"decimal place{'s' if dp > 1 else ''}, applying the events in "
-               f"chronological order.")
+    steps = (
+        f"Reduction: {pct}% of {a} = {reduction}. "
+        f"Starting quantity {a}, final quantity {shown:.{shown_dp}f}."
+    )
+    request = (
+        f"A vessel holds {a} units. Its contents are reduced by {pct}%, after "
+        f"which {added} units are added. Report the final quantity to {dp} "
+        f"decimal place{'s' if dp > 1 else ''}, applying the events in "
+        f"chronological order."
+    )
     state = json.dumps({"request": request, "response": steps}, ensure_ascii=False)
     return Item(
-        "noul", state,
+        "noul",
+        state,
         "Does the response fully and correctly satisfy the request?",
-        [["false", "the response does not satisfy the request as stated"],
-         ["true", "the response fully and correctly satisfies the request"]],
-        1 if fault == "none" else 0, "syn_verify",
+        [
+            ["false", "the response does not satisfy the request as stated"],
+            ["true", "the response fully and correctly satisfies the request"],
+        ],
+        1 if fault == "none" else 0,
+        "syn_verify",
         {"rule": "verify", "edge": fault},
     )
 
@@ -413,9 +471,9 @@ GENERATORS = {
 # unseen variant of a rule rather than recall of a seen one. Each is a parameter the
 # rule text still states explicitly -- the model has to read it, not remember it.
 HELD_OUT_EDGES = {
-    "syn_units": {"round_nearest"},      # trains on round up / round down
-    "syn_window": {"month_end_clamp"},   # trains on windows that need no clamping
-    "syn_verify": {"order"},             # trains on arithmetic / precision / sign
+    "syn_units": {"round_nearest"},  # trains on round up / round down
+    "syn_window": {"month_end_clamp"},  # trains on windows that need no clamping
+    "syn_verify": {"order"},  # trains on arithmetic / precision / sign
 }
 
 
@@ -427,8 +485,13 @@ HELD_OUT_EDGES = {
 EVAL_COMPANION_EDGES = {"syn_verify": {"none"}}
 
 
-def generate(n: int, seed: int = 0, only: list[str] | None = None,
-             split: str = "all", tries_per_item: int = 60) -> list[Item]:
+def generate(
+    n: int,
+    seed: int = 0,
+    only: list[str] | None = None,
+    split: str = "all",
+    tries_per_item: int = 60,
+) -> list[Item]:
     """`split`: 'all', 'train' (drop held-out edges), or 'heldout' (those + companions).
 
     Rejection-samples rather than post-filtering so the requested count is exact and
@@ -453,7 +516,7 @@ def generate(n: int, seed: int = 0, only: list[str] | None = None,
             if split == "heldout" and edge in wanted:
                 break
         else:
-            continue                      # this generator cannot serve this split
+            continue  # this generator cannot serve this split
         edge = it.meta.get("edge")
         if split == "heldout" and held and edge not in wanted:
             continue

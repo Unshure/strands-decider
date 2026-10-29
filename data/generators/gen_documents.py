@@ -58,6 +58,7 @@ Usage (pilot):
     # then copy gen_pilot/gen_train.jsonl, gen_pilot/gen_eval.jsonl (and docs.jsonl,
     # verify.jsonl for inspection) back to the training box.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -76,29 +77,67 @@ from botocore.config import Config
 # ---- what to write about --------------------------------------------------------------
 
 DOMAINS = [
-    "employee benefits", "travel and expenses", "procurement", "vendor contracts",
-    "customer refunds and returns", "IT access control", "data retention and privacy",
-    "information security incidents", "facilities and building access", "fleet vehicles",
-    "warehouse operations", "product warranties", "subscription billing", "loan servicing",
-    "insurance claims", "property leasing", "construction subcontracting", "clinical scheduling",
-    "pharmacy dispensing", "school admissions", "university grading", "grant funding",
-    "event ticketing", "airline disruption compensation", "hotel reservations",
-    "software release management", "customer support escalation", "payroll",
-    "equipment maintenance", "food safety", "laboratory safety", "export compliance",
-    "nonprofit volunteering", "municipal permits",
+    "employee benefits",
+    "travel and expenses",
+    "procurement",
+    "vendor contracts",
+    "customer refunds and returns",
+    "IT access control",
+    "data retention and privacy",
+    "information security incidents",
+    "facilities and building access",
+    "fleet vehicles",
+    "warehouse operations",
+    "product warranties",
+    "subscription billing",
+    "loan servicing",
+    "insurance claims",
+    "property leasing",
+    "construction subcontracting",
+    "clinical scheduling",
+    "pharmacy dispensing",
+    "school admissions",
+    "university grading",
+    "grant funding",
+    "event ticketing",
+    "airline disruption compensation",
+    "hotel reservations",
+    "software release management",
+    "customer support escalation",
+    "payroll",
+    "equipment maintenance",
+    "food safety",
+    "laboratory safety",
+    "export compliance",
+    "nonprofit volunteering",
+    "municipal permits",
 ]
 # Held out: documents in these domains go to the eval file only (decider held out domains
 # the same way). Change freely, but keep the list fixed between pilot and full runs.
 HELDOUT_DOMAINS = ["insurance claims", "municipal permits", "laboratory safety", "payroll"]
 
 KINDS = [
-    "policy document with numbered sections", "service agreement", "internal procedure",
-    "terms and conditions", "eligibility guidelines", "approval matrix with narrative rules",
-    "rate card with conditions", "incident report", "email thread with an attached policy excerpt",
-    "meeting minutes recording decisions", "FAQ with exceptions", "handbook chapter",
-    "amended policy (original text plus a later amendment)", "request form with reviewer notes",
-    "service-level agreement", "scheduling rules", "escalation runbook", "pricing schedule",
-    "audit findings", "benefits summary", "onboarding checklist with conditions",
+    "policy document with numbered sections",
+    "service agreement",
+    "internal procedure",
+    "terms and conditions",
+    "eligibility guidelines",
+    "approval matrix with narrative rules",
+    "rate card with conditions",
+    "incident report",
+    "email thread with an attached policy excerpt",
+    "meeting minutes recording decisions",
+    "FAQ with exceptions",
+    "handbook chapter",
+    "amended policy (original text plus a later amendment)",
+    "request form with reviewer notes",
+    "service-level agreement",
+    "scheduling rules",
+    "escalation runbook",
+    "pricing schedule",
+    "audit findings",
+    "benefits summary",
+    "onboarding checklist with conditions",
     "vendor evaluation memo",
 ]
 
@@ -107,26 +146,26 @@ KINDS = [
 # from any benchmark's items.
 SKILLS = {
     "all_conditions": "An action is permitted only if several conditions all hold; the case "
-                      "satisfies most of them but one fails in a way that is easy to overlook.",
+    "satisfies most of them but one fails in a way that is easy to overlook.",
     "exception": "A general rule is stated, and a later clause creates an exception that changes "
-                 "the answer for the case asked about.",
+    "the answer for the case asked about.",
     "precedence": "Two provisions conflict for the case; the document says (elsewhere) which one "
-                  "prevails, e.g. an amendment over the original, or a schedule over the body.",
+    "prevails, e.g. an amendment over the original, or a schedule over the body.",
     "dates": "The answer needs date arithmetic: notice periods, business days, deadlines counted "
-             "from an event, effective dates of changes.",
+    "from an event, effective dates of changes.",
     "numbers": "The answer needs arithmetic over figures in the document: totals across line "
-               "items, percentages, caps, thresholds, pro-rating.",
+    "items, percentages, caps, thresholds, pro-rating.",
     "lookup_chain": "The answer needs two or three facts from different sections chained "
-                    "together (e.g. role -> approver -> that approver's limit).",
+    "together (e.g. role -> approver -> that approver's limit).",
     "tradeoff": "Several options each satisfy some requirements; the document's stated "
-                "priorities or weights decide which is best.",
+    "priorities or weights decide which is best.",
     "underdetermined": "The document does not settle the question for the case, and the correct "
-                       "option is that it cannot be determined; OR it looks unsettled but a "
-                       "clause does settle it (choose one direction; vary it across documents).",
+    "option is that it cannot be determined; OR it looks unsettled but a "
+    "clause does settle it (choose one direction; vary it across documents).",
     "surface_trap": "A prominent keyword, number or heading points to a wrong answer; only careful "
-                    "reading of the relevant clause gives the right one.",
+    "reading of the relevant clause gives the right one.",
     "rubric": "The document defines criteria or a rubric; a described case must be classified "
-              "under it, and at least one criterion is borderline.",
+    "under it, and at least one criterion is borderline.",
 }
 
 SYSTEM_WRITER = """You write realistic workplace documents and hard, exact questions about them.
@@ -192,13 +231,15 @@ USAGE = {"in": 0, "out": 0, "calls": 0}
 
 
 def make_client(region: str):
-    cfg = Config(read_timeout=600, connect_timeout=30,
-                 retries={"max_attempts": 10, "mode": "adaptive"})
+    cfg = Config(
+        read_timeout=600, connect_timeout=30, retries={"max_attempts": 10, "mode": "adaptive"}
+    )
     return boto3.client("bedrock-runtime", region_name=region, config=cfg)
 
 
-def converse(client, model: str, system: str, prompt: str, max_tokens: int,
-             temperature: float) -> str:
+def converse(
+    client, model: str, system: str, prompt: str, max_tokens: int, temperature: float
+) -> str:
     resp = client.converse(
         modelId=model,
         system=[{"text": system}],
@@ -217,12 +258,17 @@ def converse(client, model: str, system: str, prompt: str, max_tokens: int,
 
 # ---- stage 1: write ---------------------------------------------------------------------
 
+
 def spec_for(i: int, seed: int) -> dict:
     rng = random.Random(seed * 1_000_003 + i)
     domain = rng.choice(DOMAINS)
-    return {"id": f"doc{i:05d}", "domain": domain, "kind": rng.choice(KINDS),
-            "skills": rng.sample(sorted(SKILLS), rng.choice([3, 4])),
-            "split": "eval" if domain in HELDOUT_DOMAINS else "train"}
+    return {
+        "id": f"doc{i:05d}",
+        "domain": domain,
+        "kind": rng.choice(KINDS),
+        "skills": rng.sample(sorted(SKILLS), rng.choice([3, 4])),
+        "split": "eval" if domain in HELDOUT_DOMAINS else "train",
+    }
 
 
 def parse_json(text: str) -> dict:
@@ -230,7 +276,7 @@ def parse_json(text: str) -> dict:
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end < 0:
         raise ValueError("no JSON object in output")
-    return json.loads(text[start:end + 1])
+    return json.loads(text[start : end + 1])
 
 
 def check_doc(d: dict) -> None:
@@ -261,13 +307,22 @@ def check_doc(d: dict) -> None:
 
 def write_one(client, args, spec: dict) -> dict:
     skills = "\n".join(f"{k + 1}. {s}: {SKILLS[s]}" for k, s in enumerate(spec["skills"]))
-    prompt = WRITER_PROMPT.format(kind=spec["kind"], domain=spec["domain"],
-                                  n=len(spec["skills"]), skills=skills)
+    prompt = WRITER_PROMPT.format(
+        kind=spec["kind"], domain=spec["domain"], n=len(spec["skills"]), skills=skills
+    )
     last = None
     for _ in range(3):
         try:
-            d = parse_json(converse(client, args.model, SYSTEM_WRITER, prompt,
-                                    args.writer_max_tokens, args.writer_temperature))
+            d = parse_json(
+                converse(
+                    client,
+                    args.model,
+                    SYSTEM_WRITER,
+                    prompt,
+                    args.writer_max_tokens,
+                    args.writer_temperature,
+                )
+            )
             check_doc(d)
             return {**spec, **d}
         except (ValueError, json.JSONDecodeError) as e:
@@ -276,6 +331,7 @@ def write_one(client, args, spec: dict) -> dict:
 
 
 # ---- stage 2: verify --------------------------------------------------------------------
+
 
 def options_of(q: dict) -> list[list[str]]:
     if q["type"] == "noul":
@@ -288,10 +344,15 @@ def verify_one(client, args, doc: dict, qi: int, attempt: int) -> str | None:
     opts = options_of(q)
     random.Random(f"{doc['id']}/{qi}/{attempt}").shuffle(opts)
     prompt = VERIFY_PROMPT.format(
-        title=doc["title"], document=doc["document"], case=q["case"], question=q["question"],
-        options="\n".join(f"- {n}: {d}" for n, d in opts))
-    text = converse(client, args.model, SYSTEM_VERIFIER, prompt, args.verify_max_tokens,
-                    args.verify_temperature)
+        title=doc["title"],
+        document=doc["document"],
+        case=q["case"],
+        question=q["question"],
+        options="\n".join(f"- {n}: {d}" for n, d in opts),
+    )
+    text = converse(
+        client, args.model, SYSTEM_VERIFIER, prompt, args.verify_max_tokens, args.verify_temperature
+    )
     m = re.findall(r"ANSWER:\s*(.+)", text)
     if not m:
         return None
@@ -307,6 +368,7 @@ def verify_one(client, args, doc: dict, qi: int, attempt: int) -> str | None:
 
 # ---- stage 3: export --------------------------------------------------------------------
 
+
 def to_example(doc: dict, q: dict) -> dict:
     """One strands-decider Example (training/data/format.py); label indexes the canonical options."""
     state = f"{doc['title']}\n\n{doc['document'].strip()}\n\nCase: {q['case'].strip()}"
@@ -319,11 +381,20 @@ def to_example(doc: dict, q: dict) -> dict:
         opts = [[o["name"].strip(), o.get("description", "").strip()] for o in q["options"]]
         label = [n.lower() for n, _ in opts].index(q["answer"].strip().lower())
         kind = "choice"
-    return {"kind": kind, "state": state, "instructions": q["question"].strip(), "options": opts,
-            "label": label, "task": task, "weight": 1.0, "instruction_variants": []}
+    return {
+        "kind": kind,
+        "state": state,
+        "instructions": q["question"].strip(),
+        "options": opts,
+        "label": label,
+        "task": task,
+        "weight": 1.0,
+        "instruction_variants": [],
+    }
 
 
 # ---- driver -----------------------------------------------------------------------------
+
 
 def read_jsonl(path: Path) -> list[dict]:
     if not path.exists():
@@ -345,13 +416,19 @@ def main() -> None:
     ap.add_argument("--verify-temperature", type=float, default=0.3)
     ap.add_argument("--verify-max-tokens", type=int, default=1500)
     ap.add_argument("--price-in", type=float, default=2.5, help="USD per 1M input tokens (check)")
-    ap.add_argument("--price-out", type=float, default=12.5, help="USD per 1M output tokens (check)")
+    ap.add_argument(
+        "--price-out", type=float, default=12.5, help="USD per 1M output tokens (check)"
+    )
     ap.add_argument("--stage", choices=["all", "write", "verify", "export"], default="all")
     args = ap.parse_args()
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    docs_path, ver_path, fail_path = out / "docs.jsonl", out / "verify.jsonl", out / "failures.jsonl"
+    docs_path, ver_path, fail_path = (
+        out / "docs.jsonl",
+        out / "verify.jsonl",
+        out / "failures.jsonl",
+    )
     client = make_client(args.region)
     lock = threading.Lock()
 
@@ -362,7 +439,9 @@ def main() -> None:
     t0 = time.time()
     if args.stage in ("all", "write"):
         done = {d["id"] for d in read_jsonl(docs_path)}
-        todo = [s for s in (spec_for(i, args.seed) for i in range(args.docs)) if s["id"] not in done]
+        todo = [
+            s for s in (spec_for(i, args.seed) for i in range(args.docs)) if s["id"] not in done
+        ]
         print(f"write: {len(todo)} documents to go ({len(done)} done)")
         with ThreadPoolExecutor(args.workers) as ex:
             futs = {ex.submit(write_one, client, args, s): s for s in todo}
@@ -378,13 +457,23 @@ def main() -> None:
     docs = {d["id"]: d for d in read_jsonl(docs_path)}
     if args.stage in ("all", "verify"):
         done = {(v["id"], v["q"], v["attempt"]) for v in read_jsonl(ver_path)}
-        jobs = [(d, qi, a) for d in docs.values() for qi in range(len(d["questions"]))
-                for a in (1, 2) if (d["id"], qi, a) not in done]
+        jobs = [
+            (d, qi, a)
+            for d in docs.values()
+            for qi in range(len(d["questions"]))
+            for a in (1, 2)
+            if (d["id"], qi, a) not in done
+        ]
         print(f"verify: {len(jobs)} answers to go")
 
         def run(job):
             d, qi, a = job
-            return {"id": d["id"], "q": qi, "attempt": a, "answer": verify_one(client, args, d, qi, a)}
+            return {
+                "id": d["id"],
+                "q": qi,
+                "attempt": a,
+                "answer": verify_one(client, args, d, qi, a),
+            }
 
         with ThreadPoolExecutor(args.workers) as ex:
             futs = {ex.submit(run, j): j for j in jobs}
@@ -420,15 +509,19 @@ def main() -> None:
                 for r in rows:
                     fh.write(json.dumps(r, ensure_ascii=False) + "\n")
         n, k = stats["questions"], stats["kept"]
-        print(f"export: {len(docs)} documents, {n} questions, kept {k} ({k / max(n, 1):.0%}); "
-              f"train {len(kept['train'])}, eval {len(kept['eval'])}")
+        print(
+            f"export: {len(docs)} documents, {n} questions, kept {k} ({k / max(n, 1):.0%}); "
+            f"train {len(kept['train'])}, eval {len(kept['eval'])}"
+        )
         for skill, (a, b) in sorted(stats["by_skill"].items()):
             print(f"  {skill:<16} kept {b}/{a}")
         (out / "stats.json").write_text(json.dumps(stats, indent=1))
 
     cost = USAGE["in"] / 1e6 * args.price_in + USAGE["out"] / 1e6 * args.price_out
-    print(f"this run: {USAGE['calls']} calls, {USAGE['in']:,} in / {USAGE['out']:,} out tokens, "
-          f"~${cost:.2f} at the given prices, {time.time() - t0:.0f} s")
+    print(
+        f"this run: {USAGE['calls']} calls, {USAGE['in']:,} in / {USAGE['out']:,} out tokens, "
+        f"~${cost:.2f} at the given prices, {time.time() - t0:.0f} s"
+    )
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ The exact McNemar p-value is the two-sided binomial test on the discordant tasks
 p = min(1, 2 * P(X <= min(b, c))), X ~ Binomial(b + c, 1/2); p = 1 when b + c = 0.
 Standard library only. Exit code 2 if the two task sets differ.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -55,7 +56,7 @@ def mcnemar_exact(b: int, c: int) -> float:
     if n == 0:
         return 1.0
     k = min(b, c)
-    tail = sum(comb(n, i) for i in range(k + 1)) / 2 ** n
+    tail = sum(comb(n, i) for i in range(k + 1)) / 2**n
     return min(1.0, 2 * tail)
 
 
@@ -64,10 +65,18 @@ def compare(a: dict[str, bool], b: dict[str, bool], ids) -> dict:
     neither = sum(not a[t] and not b[t] for t in ids)
     a_only = sum(a[t] and not b[t] for t in ids)
     b_only = sum(b[t] and not a[t] for t in ids)
-    return {"n": len(ids), "a_correct": both + a_only, "b_correct": both + b_only,
-            "both_right": both, "both_wrong": neither, "a_only": a_only, "b_only": b_only,
-            "discordant": a_only + b_only, "net_b_minus_a": b_only - a_only,
-            "mcnemar_exact_p": mcnemar_exact(a_only, b_only)}
+    return {
+        "n": len(ids),
+        "a_correct": both + a_only,
+        "b_correct": both + b_only,
+        "both_right": both,
+        "both_wrong": neither,
+        "a_only": a_only,
+        "b_only": b_only,
+        "discordant": a_only + b_only,
+        "net_b_minus_a": b_only - a_only,
+        "mcnemar_exact_p": mcnemar_exact(a_only, b_only),
+    }
 
 
 def main() -> int:
@@ -76,8 +85,11 @@ def main() -> int:
     ap.add_argument("--a-run", default=None)
     ap.add_argument("--b", required=True, help="candidate: results.jsonl or jevbench_results.csv")
     ap.add_argument("--b-run", default=None)
-    ap.add_argument("--tasks", default=str(DEFAULT_TASKS),
-                    help="task_id,family,tier CSV for the per-tier split ('' to skip)")
+    ap.add_argument(
+        "--tasks",
+        default=str(DEFAULT_TASKS),
+        help="task_id,family,tier CSV for the per-tier split ('' to skip)",
+    )
     ap.add_argument("--list", action="store_true", help="print the discordant task ids")
     ap.add_argument("--json", default=None, help="also write the result as JSON here")
     args = ap.parse_args()
@@ -86,7 +98,10 @@ def main() -> int:
     la = args.a_run or Path(args.a).parent.name or args.a
     lb = args.b_run or Path(args.b).parent.name or args.b
     if set(a) != set(b):
-        print(f"task sets differ: {len(a)} vs {len(b)}, {len(set(a) & set(b))} shared", file=sys.stderr)
+        print(
+            f"task sets differ: {len(a)} vs {len(b)}, {len(set(a) & set(b))} shared",
+            file=sys.stderr,
+        )
         return 2
     ids = sorted(a)
 
@@ -105,18 +120,25 @@ def main() -> int:
     print(hdr)
     print("-" * len(hdr))
     for name, r in rows:
-        print(f"{name:<9}{r['n']:>5}{r['a_correct']:>6}{r['b_correct']:>6}{r['both_right']:>7}"
-              f"{r['both_wrong']:>7}{r['a_only']:>8}{r['b_only']:>8}{r['net_b_minus_a']:>+9}"
-              f"{r['mcnemar_exact_p']:>11.4f}")
+        print(
+            f"{name:<9}{r['n']:>5}{r['a_correct']:>6}{r['b_correct']:>6}{r['both_right']:>7}"
+            f"{r['both_wrong']:>7}{r['a_only']:>8}{r['b_only']:>8}{r['net_b_minus_a']:>+9}"
+            f"{r['mcnemar_exact_p']:>11.4f}"
+        )
     if args.list:
         for i in ids:
             if a[i] != b[i]:
                 print(f"  {'A only' if a[i] else 'B only'}  {tier.get(i, '?'):<8} {i}")
     if args.json:
-        out = {"a": {"source": args.a, "run": args.a_run}, "b": {"source": args.b, "run": args.b_run},
-               "slices": dict(rows),
-               "discordant_ids": {"a_only": [i for i in ids if a[i] and not b[i]],
-                                  "b_only": [i for i in ids if b[i] and not a[i]]}}
+        out = {
+            "a": {"source": args.a, "run": args.a_run},
+            "b": {"source": args.b, "run": args.b_run},
+            "slices": dict(rows),
+            "discordant_ids": {
+                "a_only": [i for i in ids if a[i] and not b[i]],
+                "b_only": [i for i in ids if b[i] and not a[i]],
+            },
+        }
         Path(args.json).write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8")
     return 0
 

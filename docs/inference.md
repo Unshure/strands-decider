@@ -11,7 +11,9 @@ checkpoint from `training/recipe.sh all` is already calibrated; calibrate any ot
 checkpoint with `python -m training.evaluate calibrate` before you serve it.
 
 `eval` and `calibrate` also accept `--device cuda`, `mps`, or `cpu` and use the same
-cuda > mps > cpu selection when omitted. They use torch; MLX is an `ask`/`serve` backend only.
+cuda > mps > cpu selection when omitted. They use torch; MLX is an `ask`/`serve` backend only. They
+prepare the model as `serve` does on that device (the MPS and CPU kernels, an fp32 torso on
+CPU), so they report the numbers serving returns. `--device mlx` is refused.
 
 - [Environments for serving](#environments-for-serving): Linux with CUDA, a Mac, or CPU.
 - [Model artifact](#model-artifact): what a checkpoint holds, and the Hugging Face export.
@@ -20,6 +22,8 @@ cuda > mps > cpu selection when omitted. They use torch; MLX is an `ask`/`serve`
 - [Asking many questions is nearly free](#asking-many-questions-is-nearly-free): the shared-prefix cache.
 - [Serving on a Mac](#serving-on-a-mac): MPS, and the one kernel that had to be replaced.
 - [Serving on a Mac with MLX](#serving-on-a-mac-with-mlx): `--device mlx`, measured against MPS.
+- [`../deploy/`](../deploy/README.md): hosting the server, for example on an Amazon SageMaker
+  real-time endpoint.
 - [`../examples/strands/`](../examples/strands/README.md): an agent built with the Strands
   Agents SDK that uses the server, with its client in `_client.py`.
 - [`../evaluation/results.md`](../evaluation/results.md): measured latency and accuracy on an
@@ -49,7 +53,7 @@ from a clone, for example `pip install -e ".[mlx]"`.
 | `cuda` | `pip install "strands-decider[cuda]"` | flash-linear-attention (Linux). causal-conv1d compiles against the local CUDA toolkit and is installed separately: `pip install causal-conv1d --no-build-isolation`. |
 | `mps` | `pip install "strands-decider[mps]"` | Nothing: the base install. |
 | `cpu` | `pip install "strands-decider[cpu]"` | Nothing: the base install. |
-| `mlx` | `pip install "strands-decider[mlx]"` | mlx and mlx-lm (Apple silicon only). |
+| `mlx` | `pip install "strands-decider[mlx]"` | mlx and mlx-lm (Python 3.11+, Apple silicon only). |
 
 flash-linear-attention installs on a Mac without Triton, but its kernels need Triton, so it
 cannot run there. `mps_kernels.py` therefore steps aside only when Triton is present too, and
@@ -120,7 +124,7 @@ writes them, `python -m training.evaluate calibrate` adds the temperatures, and 
 | --- | --- |
 | `strands_decider_config.json` | The model configuration: the base model name, the readout type and size, the window (`max_length`) and the fitted temperatures. A checkpoint saved before the rename, such as the published v19, holds `hobson_config.json` instead; `load` reads either |
 | `lora/` | The LoRA adapter (`adapter_config.json`, `adapter_model.safetensors`) |
-| `slot_head.pt` or `head.safetensors` | The readout weights. `save_pretrained` writes `slot_head.pt`. An export from `strands_decider.hf_export` holds `head.safetensors` instead. |
+| `slot_head.pt` or `head.safetensors` | The readout weights. `save_pretrained` writes `slot_head.pt`. An export from `training.hf_export` holds `head.safetensors` instead. |
 | `tokenizer.json`, `tokenizer_config.json` | The tokenizer |
 | `chat_template.jinja` | The chat template, saved with the tokenizer. Inference does not read it. |
 
@@ -132,13 +136,13 @@ The base weights are not in the checkpoint. At first use, `load` downloads
 `provenance.json` records for the same base model, so a Hugging Face export loads the base it
 was trained on. With neither, the loader gets the current `main` of that repository.
 
-`python -m strands_decider.hf_export export CKPT OUT --run-id RUN` writes a checkpoint as a Hugging
+`python -m training.hf_export export CKPT OUT --run-id RUN` writes a checkpoint as a Hugging
 Face-format folder. Without `--run-id`, the exporter takes the run id from a
 `results/<run-id>/` part of the CKPT path, and it stops if the path has none. The folder
 holds the readout as `head.safetensors`, so it has no pickle files. It also holds the PEFT
 adapter, the tokenizer and configuration files, and a model card (`README.md`).
 `provenance.json`, `LICENSE.md` with the licence status and `MANIFEST.sha256` complete it.
-`python -m strands_decider.hf_export verify DIR` checks a folder. `StrandsDeciderModel.load` reads the
+`python -m training.hf_export verify DIR` checks a folder. `StrandsDeciderModel.load` reads the
 folder as it reads a checkpoint, and the base weights still download separately from
 Hugging Face. Where a command takes a checkpoint path (`strands-decider serve`, `strands-decider ask`,
 `strands-decider info`), a Hub model repo id such as `StrandsAgents/strands-decider-2B-qwen3.5-v1-2610` also works: the loader
@@ -206,6 +210,9 @@ targets this endpoint and runs against it unmodified: 231 of 231 tasks attempted
 schema validity 1.000 ([External benchmark](../evaluation/jevbench.md#external-benchmark-jevbench-v1-public-set)).
 Compatibility with the Jev API itself is not verified. `GET /health` returns the model
 name, the checkpoint path, the base model, the device and the calibration temperature.
+`GET /ping` and `POST /invocations` are the same as `/health` and `/v1/systemone`: they are
+the paths that SageMaker and Bedrock AgentCore Runtime call
+([../deploy/sagemaker/](../deploy/sagemaker/README.md)).
 
 The server binds to `127.0.0.1` by default and has no authentication. Its behaviour under
 concurrent requests is not verified. Use it for local experiments only

@@ -11,6 +11,7 @@ import contextlib
 import os
 import threading
 import time
+from collections.abc import AsyncIterator
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
@@ -50,10 +51,22 @@ def create_app(
 ) -> FastAPI:
     global _engine
 
+    @contextlib.asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            # The MLX engine owns a worker thread (see mlx_engine.MLXEngine); other engines
+            # have nothing to close.
+            close = getattr(_engine, "close", None)
+            if callable(close):
+                close()
+
     app = FastAPI(
         title="strands-decider System One",
         version="0.1.0",
         description="Typed, calibrated answers. Choice, Score and Noul over one state.",
+        lifespan=lifespan,
     )
 
     # Identify the response's `model` by the checkpoint served, so multiple servers
@@ -61,8 +74,12 @@ def create_app(
     resolved_name = model_name or os.path.basename(checkpoint.rstrip("/")) or checkpoint
 
     config = EngineConfig(
-        device=device, use_prefix_cache=use_prefix_cache, model_name=resolved_name,
-        strict_window=strict_window, max_batch=max_batch, max_batch_tokens=max_batch_tokens,
+        device=device,
+        use_prefix_cache=use_prefix_cache,
+        model_name=resolved_name,
+        strict_window=strict_window,
+        max_batch=max_batch,
+        max_batch_tokens=max_batch_tokens,
     )
     if vision:
         if device == "mlx":
@@ -76,7 +93,10 @@ def create_app(
         model = StrandsDeciderModel.load(checkpoint, attn_implementation=attn_implementation)
         _engine = SystemOneEngine(model, config)
 
+    # SageMaker and AgentCore Runtime call /ping and /invocations; each is the same
+    # handler as the path above it.
     @app.get("/health")
+    @app.get("/ping")
     def health() -> dict:
         eng = get_engine()
         return {
@@ -96,6 +116,7 @@ def create_app(
     guard = _engine_lock if _needs_serialisation(device) else contextlib.nullcontext()
 
     @app.post("/v1/systemone", response_model=SystemOneResponse)
+    @app.post("/invocations", response_model=SystemOneResponse)
     def systemone(request: SystemOneRequest) -> JSONResponse:
         eng = get_engine()
         started = time.perf_counter()

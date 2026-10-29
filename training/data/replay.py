@@ -21,6 +21,7 @@ On N GPUs: one process per GPU with `--num-shards N --shard-index i` (each with 
 `--shift-by`), then the same command with `--merge` in place of `--shard-index` to write
 `--out` (see data/shards.py).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -38,8 +39,12 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("checkpoint")
     ap.add_argument("--src", required=True, help="the rows to label, one train_files entry")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--shift-by", nargs="*", default=[],
-                    help="train_files that come before --src; indices are offset past their rows")
+    ap.add_argument(
+        "--shift-by",
+        nargs="*",
+        default=[],
+        help="train_files that come before --src; indices are offset past their rows",
+    )
     ap.add_argument("--batch-size", type=int, default=8)
     shards.add_args(ap)
     args = ap.parse_args(argv)
@@ -52,23 +57,33 @@ def main(argv: list[str] | None = None) -> None:
     rows = load_examples([args.src])
     # The rows this process writes: all of them, or for a shard the single-process run's
     # --batch-size batches i, i + N, ..., so that each row is computed in the same batch.
-    keep = [j for j in range(len(rows))
-            if not sharded or j // args.batch_size % args.num_shards == args.shard_index]
+    keep = [
+        j
+        for j in range(len(rows))
+        if not sharded or j // args.batch_size % args.num_shards == args.shard_index
+    ]
     out = shards.path(args.out, args.shard_index, args.num_shards) if sharded else args.out
     if args.merge:
         got = shards.merge(args.out, args.num_shards)
         if set(got) != set(range(offset, offset + len(rows))):
-            raise SystemExit(f"shards cover {len(got):,} rows, not the {len(rows):,} of "
-                             f"{args.src} from index {offset:,} -- wrong --src or --shift-by?")
+            raise SystemExit(
+                f"shards cover {len(got):,} rows, not the {len(rows):,} of "
+                f"{args.src} from index {offset:,} -- wrong --src or --shift-by?"
+            )
         found = [got[offset + j] for j in keep]
     else:
         model = StrandsDeciderModel.load(args.checkpoint)
-        logits, _, n_slots, _ = collect_logits(model, [rows[j] for j in keep],
-                                              max_length=model.config.max_length,
-                                              batch_size=args.batch_size)
+        logits, _, n_slots, _ = collect_logits(
+            model,
+            [rows[j] for j in keep],
+            max_length=model.config.max_length,
+            batch_size=args.batch_size,
+        )
         probs = masked_log_softmax(logits, n_slots).exp()
-        found = [[round(float(x), 6) for x in p[:n]]
-                 for p, n in zip(probs, n_slots.tolist(), strict=True)]
+        found = [
+            [round(float(x), 6) for x in p[:n]]
+            for p, n in zip(probs, n_slots.tolist(), strict=True)
+        ]
     agree = 0
     with open(out, "w", encoding="utf-8") as fh:
         for j, row in zip(keep, found, strict=True):
@@ -78,8 +93,10 @@ def main(argv: list[str] | None = None) -> None:
             fh.write(json.dumps({"i": offset + j, "probs": row}) + "\n")
     if sharded:
         shards.mark_done(out)
-    print(f"{out}: {len(keep):,} rows from {args.checkpoint}, indices from {offset:,}; "
-          f"its answer equals the label on {agree / max(len(keep), 1):.3f}")
+    print(
+        f"{out}: {len(keep):,} rows from {args.checkpoint}, indices from {offset:,}; "
+        f"its answer equals the label on {agree / max(len(keep), 1):.3f}"
+    )
 
 
 if __name__ == "__main__":

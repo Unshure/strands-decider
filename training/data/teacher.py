@@ -24,6 +24,7 @@ On N GPUs, run one process per GPU with `--num-shards N --shard-index i`, then t
 command with `--merge` instead of `--shard-index` to write `--out` (and `--shift-by`'s
 file) exactly as one process would (see data/shards.py).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -54,14 +55,18 @@ def to_row(ex: Example) -> tuple[dict, list[int]] | None:
         # Canonical noul order is (false, true); SemIf lists true first.
         desc = {name: d for name, d in ex.options}
         order = [1, 0]
-        options = [{"id": k, "description": f"{k}: " + desc.get(k, f"The proposition is {k}.")}
-                   for k in ("true", "false")]
+        options = [
+            {"id": k, "description": f"{k}: " + desc.get(k, f"The proposition is {k}.")}
+            for k in ("true", "false")
+        ]
     elif ex.kind == "choice":
         order = list(range(ex.n_options))
         options = [{"id": n, "description": f"{n}: " + (d or n)} for n, d in ex.options]
     else:
         order = list(range(ex.n_options))
-        options = [{"id": str(i), "description": f"{i}: {d}"} for i, (_, d) in enumerate(ex.options)]
+        options = [
+            {"id": str(i), "description": f"{i}: {d}"} for i, (_, d) in enumerate(ex.options)
+        ]
     row = {"id": "x", "state": ex.state, "question": ex.instructions, "options": options}
     return row, order
 
@@ -70,13 +75,20 @@ def render(tokenizer: Any, row: dict) -> str:
     payload = {
         "evidence": row["state"],
         "criterion": row["question"],
-        "options": [{"letter": LETTERS[i], "description": o["description"]}
-                    for i, o in enumerate(row["options"])],
+        "options": [
+            {"letter": LETTERS[i], "description": o["description"]}
+            for i, o in enumerate(row["options"])
+        ],
     }
-    messages = [{"role": "system", "content": SYSTEM},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
-    return str(tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True,
-                                             enable_thinking=False))
+    messages = [
+        {"role": "system", "content": SYSTEM},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+    return str(
+        tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
+        )
+    )
 
 
 def letter_ids(tokenizer: Any) -> list[int]:
@@ -102,17 +114,27 @@ def load(model_id: str, revision: str) -> tuple[Any, Any]:
         # come after every real token, so the state at the last real token never sees them.
         cls = transformers.Qwen3_5ForCausalLM
         config = config.get_text_config()
-    model = cls.from_pretrained(model_id, revision=revision, config=config,
-                                dtype=torch.bfloat16, device_map={"": "cuda"})
+    model = cls.from_pretrained(
+        model_id, revision=revision, config=config, dtype=torch.bfloat16, device_map={"": "cuda"}
+    )
     model.eval()
     return model, tok
 
 
-def label(model: Any, tok: Any, examples: Sequence[Example], *, max_batch_tokens: int = 4000,
-          max_batch: int = 32, max_tokens: int = 4096, log_every: int = 2000,
-          skip: set | None = None,
-          sink: Callable[[int, list[float]], None] | None = None, num_shards: int = 1,
-          shard_index: int = 0) -> list[list[float] | None]:
+def label(
+    model: Any,
+    tok: Any,
+    examples: Sequence[Example],
+    *,
+    max_batch_tokens: int = 4000,
+    max_batch: int = 32,
+    max_tokens: int = 4096,
+    log_every: int = 2000,
+    skip: set | None = None,
+    sink: Callable[[int, list[float]], None] | None = None,
+    num_shards: int = 1,
+    shard_index: int = 0,
+) -> list[list[float] | None]:
     """Teacher probabilities in each example's canonical option order (None if unlabelled).
 
     `skip` holds example indices already labelled (a resumed run); `sink(i, probs)` is
@@ -155,8 +177,11 @@ def label(model: Any, tok: Any, examples: Sequence[Example], *, max_batch_tokens
     done, t0, k, n_batch = 0, time.time(), 0, 0
     while k < len(rows):
         batch: list[tuple[int, list[int], list[int]]] = []
-        while k < len(rows) and len(batch) < max_batch and \
-                (len(batch) + 1) * len(rows[k][1]) <= max_batch_tokens:
+        while (
+            k < len(rows)
+            and len(batch) < max_batch
+            and (len(batch) + 1) * len(rows[k][1]) <= max_batch_tokens
+        ):
             batch.append(rows[k])
             k += 1
         if not batch:  # a single row longer than the token budget
@@ -172,9 +197,11 @@ def label(model: Any, tok: Any, examples: Sequence[Example], *, max_batch_tokens
             ids_t[j, : len(ids)] = torch.tensor(ids)
             mask[j, : len(ids)] = 1
         with torch.inference_mode():
-            hidden = model.model(input_ids=ids_t.to(head.device),
-                                 attention_mask=mask.to(head.device),
-                                 use_cache=False).last_hidden_state
+            hidden = model.model(
+                input_ids=ids_t.to(head.device),
+                attention_mask=mask.to(head.device),
+                use_cache=False,
+            ).last_hidden_state
             last = hidden[torch.arange(len(batch)), mask.sum(1).to(head.device) - 1]
             for j, (i, _, order) in enumerate(batch):
                 n = len(order)
@@ -191,23 +218,32 @@ def label(model: Any, tok: Any, examples: Sequence[Example], *, max_batch_tokens
         done += len(batch)
         if log_every and done // log_every != (done - len(batch)) // log_every:
             rate = done / (time.time() - t0)
-            print(f"[teacher] {done:,}/{total:,}  {rate:.1f} rows/s  "
-                  f"eta {(total - done) / rate / 60:.0f} min", flush=True)
+            print(
+                f"[teacher] {done:,}/{total:,}  {rate:.1f} rows/s  "
+                f"eta {(total - done) / rate / 60:.0f} min",
+                flush=True,
+            )
     return out
 
 
 def main(argv: list[str] | None = None) -> None:
-    ap = argparse.ArgumentParser(description="Label a corpus with a frozen teacher's option distribution.")
+    ap = argparse.ArgumentParser(
+        description="Label a corpus with a frozen teacher's option distribution."
+    )
     ap.add_argument("--src", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--model", default="Qwen/Qwen3.5-4B")
     ap.add_argument("--revision", default="851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a")
     ap.add_argument("--limit", type=int, default=0, help="first N rows only (timing, checks)")
     ap.add_argument("--max-batch-tokens", type=int, default=4000)
-    ap.add_argument("--shift-by", nargs="*", default=[],
-                    help="train files listed BEFORE --src in train_files; also writes "
-                         "<out>_train.jsonl with indices shifted past their rows, which is "
-                         "what TrainConfig.teacher_file expects")
+    ap.add_argument(
+        "--shift-by",
+        nargs="*",
+        default=[],
+        help="train files listed BEFORE --src in train_files; also writes "
+        "<out>_train.jsonl with indices shifted past their rows, which is "
+        "what TrainConfig.teacher_file expects",
+    )
     shards.add_args(ap)
     args = ap.parse_args(argv)
     sharded = shards.sharded(ap, args)
@@ -227,13 +263,22 @@ def main(argv: list[str] | None = None) -> None:
     if not args.merge:
         model, tok = load(args.model, args.revision)
         with open(out, "a", encoding="utf-8") as fh:
+
             def sink(i: int, p: list[float]) -> None:
                 fh.write(json.dumps({"i": i, "probs": [round(x, 6) for x in p]}) + "\n")
                 fh.flush()
                 done[i] = p
-            label(model, tok, examples, max_batch_tokens=args.max_batch_tokens,
-                  skip=set(done), sink=sink, num_shards=args.num_shards,
-                  shard_index=args.shard_index or 0)
+
+            label(
+                model,
+                tok,
+                examples,
+                max_batch_tokens=args.max_batch_tokens,
+                skip=set(done),
+                sink=sink,
+                num_shards=args.num_shards,
+                shard_index=args.shard_index or 0,
+            )
     secs = time.time() - t0
 
     # Rewrite in row order, so the file is the same however many resumes it took.
@@ -247,8 +292,10 @@ def main(argv: list[str] | None = None) -> None:
         n += 1
         agree += hit
         by_task.setdefault(examples[i].task, []).append(hit)
-    print(f"labelled {n:,} of {len(examples):,} rows ({secs / 60:.1f} min this run); "
-          f"teacher argmax = gold on {agree / max(n, 1):.3f}")
+    print(
+        f"labelled {n:,} of {len(examples):,} rows ({secs / 60:.1f} min this run); "
+        f"teacher argmax = gold on {agree / max(n, 1):.3f}"
+    )
     for task, hits in sorted(by_task.items()):
         print(f"  {task:<22} {sum(hits) / len(hits):.3f}  (n={len(hits):,})")
     if args.shift_by and not sharded:  # for shards, --merge writes it

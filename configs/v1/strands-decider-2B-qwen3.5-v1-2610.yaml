@@ -1,0 +1,116 @@
+# strands-decider-2B-qwen3.5-v1-2610: the training config of the released model, seed 0.
+# The release is a soup of three training runs of this config, seeds 0, 1 and 2 (the three
+# configs differ only in `seed`), calibrated after the soup. Research name of the recipe:
+# g28-qwen2b. evaluation/results.md, section "v1, the released model", has the seeds and
+# the soup. The Hub repository holds the same three configs (training/configs/).
+#
+# The data is the v1 mix, 246,678 rows: v21's rows without the 20,000 from datasets whose
+# terms restrict commercial use, 24,533 code-task rows, 96,638 rows from more public
+# datasets and 22,168 rule-application rows. The teacher is gemma-4-31B-it, where its answer
+# agrees with the gold label. The anchor is the released v19. The builders of this mix are
+# not in this repository, so most of its inputs cannot be rebuilt from it:
+#   data/g28/data/train_v5_nc.jsonl       NOT REPRODUCIBLE: data/train_v5.jsonl without the
+#                                         20,000 rows (80,449 rows)
+#   data/g28/data/multistep_v14.jsonl     `training/recipe.sh fetch multistep`
+#   data/g28/data/generated_v16p.jsonl    `recipe.sh generated`
+#   data/g28/data/generated_v18p.jsonl    `recipe.sh generated`
+#   data/g28/data/adequacy_hs2.jsonl      `recipe.sh fetch adequacy`
+#   data/g28/data/adequacy_gen.jsonl      `recipe.sh adequacy`
+#                                         (these five are the recipe's files in data/, byte
+#                                         for byte: copy them into data/g28/data/)
+#   data/g28/data/code_g28.jsonl          NOT REPRODUCIBLE: the 24,533 code-task rows
+#   data/g28/data/gapfill_g28.jsonl       NOT REPRODUCIBLE: the 96,638 rows from more
+#                                         public datasets
+#   data/g28/data/rule_apply_g28.jsonl    NOT REPRODUCIBLE: the 22,168 rule-application rows
+#                                         (gemma-4-31B-it wrote the policies and cases; code
+#                                         computed the gold answers)
+#   data/teacher_g28.jsonl                NOT REPRODUCIBLE: gemma-4-31B-it's distributions,
+#                                         attached by position to the rows above
+#   checkpoints/v19-ref                   the released v19: `hf download
+#                                         StrandsAgents/strands-decider-2B-hobson-v19
+#                                         --local-dir checkpoints/v19-ref`. The run read the
+#                                         same hobson_config.json and LoRA adapter (sha256
+#                                         checked); its head was slot_head.pt, which the Hub
+#                                         holds as head.safetensors.
+# sha256 of the files the run read:
+#   c5b71a14123c476d5bfecb4934491905d731fe5007a3340143809443bbbd7fe8  data/g28/data/train_v5_nc.jsonl
+#   19e769cf7da6ff712d729b2e88776269cecdfcfd8feb8baf5434646d0b8e2665  data/g28/data/multistep_v14.jsonl
+#   4b7f9ac6ad610923bd6e449a8e536cd09b8903e93d14ef128f2e7f359f8c029a  data/g28/data/generated_v16p.jsonl
+#   c2ac8f719191194078ab71206c3fe243ec8ef46356b097b5132525042694b978  data/g28/data/generated_v18p.jsonl
+#   2a84d4f555ebd4cb136db2fcd2d09634531e8b56ec36f7015a208c0f8dd38f6f  data/g28/data/adequacy_hs2.jsonl
+#   afbf3dc3504563206bc7772b0de5dc3a0ae41541d9f6ed0a6ee4efd6daa2885e  data/g28/data/adequacy_gen.jsonl
+#   ce68189a1c967e90155b08deaac885082294ed11297c88958c15675bd0017985  data/g28/data/code_g28.jsonl
+#   cd9e3878a1f82a3ba03948dbd7502c553be4e53c8236593df715b77074c9d3b1  data/g28/data/gapfill_g28.jsonl
+#   5bc1a42286b8e58fc3a49248578b52b96495aa09b132cb3a2b3bd5475e09a89e  data/g28/data/rule_apply_g28.jsonl
+#   9479f1e261c97b1bfc7f5052b41d56758650369a3745481613064f177eb4858e  data/teacher_g28.jsonl
+#
+# Rerun, given the five files marked NOT REPRODUCIBLE (8 GPUs; training/README.md, "The v1
+# release recipes"):
+#   training/recipe.sh build fetch multistep generated adequacy
+#   mkdir -p data/g28/data && cp data/multistep_v14.jsonl data/generated_v16p.jsonl \
+#     data/generated_v18p.jsonl data/adequacy_hs2.jsonl data/adequacy_gen.jsonl data/g28/data/
+#   hf download StrandsAgents/strands-decider-2B-hobson-v19 --local-dir checkpoints/v19-ref
+#   C=configs/v1/strands-decider-2B-qwen3.5-v1-2610.yaml
+#   for s in 0 1 2; do
+#     sed "s/^seed: 0$/seed: $s/" $C > /tmp/qwen-s$s.yaml
+#     NGPU=8 TRAIN_CONFIG=/tmp/qwen-s$s.yaml CKPT=checkpoints/qwen-s$s training/recipe.sh train
+#   done
+#   python -m training.soup checkpoints/qwen-s0 checkpoints/qwen-s1 checkpoints/qwen-s2 --out checkpoints/qwen
+#   python -m training.evaluate calibrate checkpoints/qwen --data data/holdout_v5_norule.jsonl
+#   CKPT=checkpoints/qwen training/recipe.sh eval
+#
+# Changed from the run's file: the comments, and output_dir (the run's was
+# checkpoints/g28-qwen2b; `recipe.sh train` writes to $CKPT anyway). The file had no
+# host-specific paths: every path is relative to the repository root. data/g28/data/ is
+# where the run found the mix, not a directory this repository builds.
+
+train_files: ["data/g28/data/train_v5_nc.jsonl", "data/g28/data/multistep_v14.jsonl",
+              "data/g28/data/generated_v16p.jsonl", "data/g28/data/generated_v18p.jsonl",
+              "data/g28/data/adequacy_hs2.jsonl", "data/g28/data/adequacy_gen.jsonl",
+              "data/g28/data/code_g28.jsonl", "data/g28/data/gapfill_g28.jsonl",
+              "data/g28/data/rule_apply_g28.jsonl"]
+val_fraction: 0.03
+
+base_model: "Qwen/Qwen3.5-2B-Base"
+num_slots: 24           # must match `data build --max-options`; also the KL reference width
+head_type: "pointer"    # scores each option from its own hidden state; see modeling.PointerHead
+pointer_dim: 256
+head_init: "random"     # "lm_head" seeding applies to the slot head only
+kl_frozen_weight: 0.3   # KL(frozen || student) over the option-number readout
+kl_frozen_reference: "checkpoints/v19-ref"  # the released v19, at temperature 1 (header)
+# gemma-4-31B-it's distributions where its answer agrees with the gold label (header).
+teacher_file: "data/teacher_g28.jsonl"
+teacher_weight: 1.0
+head_dropout: 0.05
+max_length: 4096
+
+use_lora: true
+lora_r: 16
+lora_alpha: 32
+# Attention and MLP projections, plus the recurrent layers' own; without these LoRA
+# would reach only the 6 full-attention layers of 24.
+lora_targets: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj",
+               "in_proj_qkv", "in_proj_z", "in_proj_a", "in_proj_b", "out_proj"]
+freeze_torso: false     # true = head-only training (much weaker, but very cheap)
+
+epochs: 1
+micro_batch_size: 8
+grad_accum: 4           # effective batch 32
+lr: 0.0001              # LoRA
+head_lr: 0.001          # randomly-initialised head needs a bigger step
+weight_decay: 0.01
+warmup_ratio: 0.03
+max_grad_norm: 1.0
+gradient_checkpointing: false  # speed only; 80 GB GPUs
+
+shuffle_options: true   # the whole point -- do not turn this off
+group_by_length: true   # on: ~2k-token documents among ~250-token rows would otherwise
+                        # pad most batches; it changes batch composition, not content
+ordinal_smoothing: 0.1
+reverse_score_prob: 0.5
+
+output_dir: "checkpoints/strands-decider-2B-qwen3.5-v1-2610-s0"
+seed: 0
+log_every: 20
+eval_every: 500
+precompute_frozen_kl: true  # kl_frozen_reference needs it; otherwise speed only

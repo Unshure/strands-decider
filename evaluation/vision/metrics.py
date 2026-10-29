@@ -71,7 +71,9 @@ def naturalbench_paired(results: list[dict[str, Any]]) -> dict[str, float]:
     return {"groups": len(groups), "q_acc": round(q, 4), "i_acc": round(i, 4), "g_acc": round(g, 4)}
 
 
-def image_dependence(with_img: list[dict[str, Any]], blind: list[dict[str, Any]]) -> dict[str, float]:
+def image_dependence(
+    with_img: list[dict[str, Any]], blind: list[dict[str, Any]]
+) -> dict[str, float]:
     """How much the image moves the answer: mean total-variation distance and the
     confidence drop when the image is removed, matched by item id."""
     b = {r["id"]: r for r in blind}
@@ -82,5 +84,8 @@ def image_dependence(with_img: list[dict[str, Any]], blind: list[dict[str, Any]]
             tv += 0.5 * sum(abs(x - y) for x, y in zip(p, q, strict=True))
             drop += max(p) - max(q)
             n += 1
-    return {"n": n, "mean_tv_distance": round(tv / n, 4) if n else math.nan,
-            "mean_confidence_drop": round(drop / n, 4) if n else math.nan}
+    return {
+        "n": n,
+        "mean_tv_distance": round(tv / n, 4) if n else math.nan,
+        "mean_confidence_drop": round(drop / n, 4) if n else math.nan,
+    }

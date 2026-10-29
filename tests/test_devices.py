@@ -33,11 +33,15 @@ def test_mlx_is_unavailable_off_apple_silicon(monkeypatch):
     assert not infer.mlx_available()
 
 
-@pytest.mark.parametrize(("found", "expected"), [
-    ({"mlx.core", "mlx_lm"}, True),
-    ({"mlx_lm"}, False),  # an `mlx` namespace directory left behind without mlx.core
-    (None, False),  # no `mlx` at all: finding `mlx.core` raises
-], ids=["installed", "namespace-leftover", "absent"])
+@pytest.mark.parametrize(
+    ("found", "expected"),
+    [
+        ({"mlx.core", "mlx_lm"}, True),
+        ({"mlx_lm"}, False),  # an `mlx` namespace directory left behind without mlx.core
+        (None, False),  # no `mlx` at all: finding `mlx.core` raises
+    ],
+    ids=["installed", "namespace-leftover", "absent"],
+)
 def test_mlx_is_available_only_with_mlx_core(monkeypatch, found, expected):
     import importlib.util
 
@@ -71,12 +75,27 @@ def test_the_server_builds_the_mlx_engine_for_device_mlx(monkeypatch):
 
     class _Engine:
         cfg = type("Cfg", (), {"model_name": "hobson", "device": "mlx", "use_prefix_cache": True})()
-        model = type("Model", (), {"config": type("Config", (), {
-            "base_model": "stub", "num_slots": 24, "temperature": 1.0, "max_length": 512})()})()
+        model = type(
+            "Model",
+            (),
+            {
+                "config": type(
+                    "Config",
+                    (),
+                    {"base_model": "stub", "num_slots": 24, "temperature": 1.0, "max_length": 512},
+                )()
+            },
+        )()
 
     calls = []
-    monkeypatch.setattr(server, "load_mlx", lambda checkpoint, config: calls.append((checkpoint, config)) or _Engine())
-    monkeypatch.setattr(server.StrandsDeciderModel, "load", lambda *a, **k: pytest.fail("torch load"))
+    monkeypatch.setattr(
+        server,
+        "load_mlx",
+        lambda checkpoint, config: calls.append((checkpoint, config)) or _Engine(),
+    )
+    monkeypatch.setattr(
+        server.StrandsDeciderModel, "load", lambda *a, **k: pytest.fail("torch load")
+    )
     app = server.create_app("org/hobson", device="mlx", strict_window=True, max_batch=7)
     assert TestClient(app).get("/health").json()["device"] == "mlx"
     [(checkpoint, config)] = calls

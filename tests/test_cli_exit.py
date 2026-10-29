@@ -77,8 +77,9 @@ def test_the_fast_exit_leaks_no_semaphore():
         "cli.app = app\n"
         "cli.main()\n"
     )
-    res = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
-                         timeout=120)
+    res = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=120
+    )
     assert res.returncode == 0, res.stderr
     assert "leaked semaphore" not in res.stderr
 
@@ -93,14 +94,24 @@ def _tiny_checkpoint(tmp_path):
     vocab = {w: i for i, w in enumerate(["<pad>", "<eos>", "<unk>", "a", "b", "c"])}
     tok = Tokenizer(models.WordLevel(vocab, unk_token="<unk>"))
     tok.pre_tokenizer = pre_tokenizers.Whitespace()
-    tok = PreTrainedTokenizerFast(tokenizer_object=tok, pad_token="<pad>", eos_token="<eos>",
-                                  unk_token="<unk>")
+    tok = PreTrainedTokenizerFast(
+        tokenizer_object=tok, pad_token="<pad>", eos_token="<eos>", unk_token="<unk>"
+    )
     base = tmp_path / "base"
-    Qwen3Model(Qwen3Config(vocab_size=len(tok), hidden_size=32, intermediate_size=64,
-                           num_hidden_layers=1, num_attention_heads=4, num_key_value_heads=2,
-                           head_dim=8)).save_pretrained(base)
-    cfg = StrandsDeciderConfig(base_model=str(base), head_type="pointer", pointer_dim=8,
-                               torch_dtype="float32", lora_r=2)
+    Qwen3Model(
+        Qwen3Config(
+            vocab_size=len(tok),
+            hidden_size=32,
+            intermediate_size=64,
+            num_hidden_layers=1,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            head_dim=8,
+        )
+    ).save_pretrained(base)
+    cfg = StrandsDeciderConfig(
+        base_model=str(base), head_type="pointer", pointer_dim=8, torch_dtype="float32", lora_r=2
+    )
     model = StrandsDeciderModel(cfg, Qwen3Model.from_pretrained(base), tok)
     model.attach_lora()
     model.save_pretrained(str(tmp_path / "ckpt"))
@@ -111,8 +122,11 @@ def test_a_real_ask_takes_the_fast_exit(fake_exit, monkeypatch, tmp_path, capsys
     # With a fake `app`, ask_cmd could stop setting _exit_fast and the tests above would
     # still pass. This one runs the console-script entry point on a real checkpoint.
     ckpt = _tiny_checkpoint(tmp_path)
-    monkeypatch.setattr(sys, "argv", ["strands-decider", "ask", ckpt, "--state", "a b c",
-                                      "--noul", "a b?", "--device", "cpu"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["strands-decider", "ask", ckpt, "--state", "a b c", "--noul", "a b?", "--device", "cpu"],
+    )
     with pytest.raises(_Exited) as e:
         cli.main()
     assert e.value.code == 0 and cli._exit_fast

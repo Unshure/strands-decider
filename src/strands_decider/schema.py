@@ -138,9 +138,7 @@ class SystemOneResponse(BaseModel):
     usage: Usage
 
 
-def derive_score_confidence(
-    probabilities: list[float], *, ordinal_smoothing: float = 0.0
-) -> float:
+def derive_score_confidence(probabilities: list[float], *, ordinal_smoothing: float = 0.0) -> float:
     """Confidence for an ordinal answer: how tightly the mass clusters on the scale.
 
     The max-probability formula used for `choice` is wrong for `score`, because it
@@ -170,10 +168,10 @@ def derive_score_confidence(
 
     mean = sum(i * pi for i, pi in enumerate(p))
     var = sum(pi * (i - mean) ** 2 for i, pi in enumerate(p))
-    sigma = var ** 0.5
+    sigma = var**0.5
 
     sigma_max = (n - 1) / 2.0
-    sigma_floor = ordinal_smoothing ** 0.5 if ordinal_smoothing > 0 else 0.0
+    sigma_floor = ordinal_smoothing**0.5 if ordinal_smoothing > 0 else 0.0
     # Guard against a floor that meets or exceeds the ceiling (tiny L, large eps).
     if sigma_max <= sigma_floor:
         return 1.0 if sigma <= sigma_floor else 0.0

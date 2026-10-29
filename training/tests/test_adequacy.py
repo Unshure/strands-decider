@@ -1,4 +1,5 @@
 """HelpSteer2 -> answer-adequacy rows (training/data/adequacy.py). No GPU, no download."""
+
 from training.data.adequacy import OPTIONS, QUESTION, TASK, balanced, to_example, verdict
 
 
@@ -9,16 +10,21 @@ def row(prompt, h, c, response="r"):
 def test_verdict_thresholds():
     assert verdict(row("p", 3, 3)) is True
     assert verdict(row("p", 4, 3)) is True
-    assert verdict(row("p", 1, 4)) is False     # unhelpful
-    assert verdict(row("p", 4, 0)) is False     # incorrect
-    assert verdict(row("p", 2, 3)) is None      # middle band dropped
+    assert verdict(row("p", 1, 4)) is False  # unhelpful
+    assert verdict(row("p", 4, 0)) is False  # incorrect
+    assert verdict(row("p", 2, 3)) is None  # middle band dropped
     assert verdict(row("p", 3, 2)) is None
 
 
 def test_balanced_prefers_pair_mates():
-    rows = [row("a", 0, 0), row("a", 4, 4, "good a"),
-            row("b", 1, 1), row("b", 3, 3, "good b"),
-            row("c", 4, 4, "good c"), row("d", 4, 4, "good d")]
+    rows = [
+        row("a", 0, 0),
+        row("a", 4, 4, "good a"),
+        row("b", 1, 1),
+        row("b", 3, 3, "good b"),
+        row("c", 4, 4, "good c"),
+        row("d", 4, 4, "good d"),
+    ]
     out = balanced(rows, seed=0)
     bad = [r for r in out if not verdict(r)]
     good = [r for r in out if verdict(r)]

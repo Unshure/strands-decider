@@ -11,6 +11,7 @@ Conventions (following the dataviz reference palette):
 Palette validated with the dataviz validator (both modes, all pairs): series 1/2 are
 blue #2a78d6 / orange #eb6834 (dark #3987e5 / #d95926).
 """
+
 from __future__ import annotations
 
 import itertools
@@ -53,9 +54,13 @@ STYLE = f"""<style>
 
 
 def _svg(width, height, body):
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" class="viz" width="{width}" height="{height}" '
-            f'viewBox="0 0 {width} {height}" role="img">\n{STYLE}\n'
-            f'<rect width="{width}" height="{height}" fill="var(--surface)"/>\n' + "\n".join(body) + "\n</svg>\n")
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" class="viz" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}" role="img">\n{STYLE}\n'
+        f'<rect width="{width}" height="{height}" fill="var(--surface)"/>\n'
+        + "\n".join(body)
+        + "\n</svg>\n"
+    )
 
 
 def text_width(s, size=11):
@@ -87,8 +92,18 @@ def _title(s):
     return f"<title>{escape(s)}</title>"
 
 
-def _plot(body, box, xs_labels, points, refs, ylabel=None, lower_is_better=False,
-          label_last=True, y_range=None, cap=None):
+def _plot(
+    body,
+    box,
+    xs_labels,
+    points,
+    refs,
+    ylabel=None,
+    lower_is_better=False,
+    label_last=True,
+    y_range=None,
+    cap=None,
+):
     """Draw one dot/lineage panel into `body` inside box=(x, y, w, h).
 
     points: list of dicts {x_label, value, kind ('default'|'experiment'), tip}
@@ -121,10 +136,14 @@ def _plot(body, box, xs_labels, points, refs, ylabel=None, lower_is_better=False
     for t in ticks:  # recessive hairline grid + tick labels
         y = ypos(t)
         body.append(f'<line class="grid" x1="{x0}" x2="{x0 + pw}" y1="{y:.1f}" y2="{y:.1f}"/>')
-        body.append(f'<text class="tick" x="{x0 - 6}" y="{y + 3.5:.1f}" text-anchor="end">{_fmt(t, step)}</text>')
+        body.append(
+            f'<text class="tick" x="{x0 - 6}" y="{y + 3.5:.1f}" text-anchor="end">{_fmt(t, step)}</text>'
+        )
     body.append(f'<line class="axis" x1="{x0}" x2="{x0 + pw}" y1="{y0 + h}" y2="{y0 + h}"/>')
     for lbl in xs_labels:
-        body.append(f'<text x="{xpos(lbl):.1f}" y="{y0 + h + 16}" text-anchor="middle">{escape(lbl)}</text>')
+        body.append(
+            f'<text x="{xpos(lbl):.1f}" y="{y0 + h + 16}" text-anchor="middle">{escape(lbl)}</text>'
+        )
     note = ", ".join(x for x in (ylabel, "lower is better" if lower_is_better else None) if x)
     if note:  # above the plot, starting at the tick-label column so it is never clipped
         body.append(f'<text class="muted" x="{x0 - 40}" y="{y0 - 10}">{escape(note)}</text>')
@@ -136,44 +155,78 @@ def _plot(body, box, xs_labels, points, refs, ylabel=None, lower_is_better=False
     for y, _, _ in placed:
         label_y.append(max(y, label_y[-1] + 12) if label_y else y)
     for (y, lbl, v), ly in zip(placed, label_y, strict=True):
-        body.append(f'<g>{_title(f"{lbl}: {v:.3f}")}'
-                    f'<line class="ref" x1="{x0}" x2="{x0 + pw}" y1="{y:.1f}" y2="{y:.1f}"/>'
-                    f'<text class="muted" x="{x0 + pw + 6}" y="{ly + 3.5:.1f}">{escape(lbl)}</text></g>')
+        body.append(
+            f"<g>{_title(f'{lbl}: {v:.3f}')}"
+            f'<line class="ref" x1="{x0}" x2="{x0 + pw}" y1="{y:.1f}" y2="{y:.1f}"/>'
+            f'<text class="muted" x="{x0 + pw + 6}" y="{ly + 3.5:.1f}">{escape(lbl)}</text></g>'
+        )
 
     lineage = [p for p in points if p["kind"] == "default"]
     if len(lineage) > 1:
-        d = " ".join(f"{'M' if i == 0 else 'L'}{xpos(p['x_label']):.1f},{ypos(p['value']):.1f}"
-                     for i, p in enumerate(lineage))
+        d = " ".join(
+            f"{'M' if i == 0 else 'L'}{xpos(p['x_label']):.1f},{ypos(p['value']):.1f}"
+            for i, p in enumerate(lineage)
+        )
         body.append(f'<path class="line1" d="{d}"/>')
     for p in points:
         cx, cy = xpos(p["x_label"]), ypos(p["value"])
         cls = "dot1" if p["kind"] == "default" else "dot2"
-        body.append(f'<g>{_title(p["tip"])}<circle class="hit" cx="{cx:.1f}" cy="{cy:.1f}" r="11"/>'
-                    f'<circle class="{cls}" cx="{cx:.1f}" cy="{cy:.1f}" r="5"/></g>')
+        body.append(
+            f'<g>{_title(p["tip"])}<circle class="hit" cx="{cx:.1f}" cy="{cy:.1f}" r="11"/>'
+            f'<circle class="{cls}" cx="{cx:.1f}" cy="{cy:.1f}" r="5"/></g>'
+        )
     if label_last and lineage:  # one direct label: where the lineage ends
         p = lineage[-1]
         label = p.get("label") or f"{p['value']:.3f}"
-        body.append(f'<text class="value" x="{xpos(p["x_label"]):.1f}" y="{ypos(p["value"]) - 10:.1f}" '
-                    f'text-anchor="middle">{escape(label)}</text>')
+        body.append(
+            f'<text class="value" x="{xpos(p["x_label"]):.1f}" y="{ypos(p["value"]) - 10:.1f}" '
+            f'text-anchor="middle">{escape(label)}</text>'
+        )
 
 
 def _legend(body, x, y, with_experiments=True):
-    body.append(f'<line class="line1" x1="{x}" x2="{x + 18}" y1="{y}" y2="{y}"/>'
-                f'<circle class="dot1" cx="{x + 9}" cy="{y}" r="4"/>'
-                f'<text x="{x + 24}" y="{y + 4}">adopted as the default recipe</text>')
+    body.append(
+        f'<line class="line1" x1="{x}" x2="{x + 18}" y1="{y}" y2="{y}"/>'
+        f'<circle class="dot1" cx="{x + 9}" cy="{y}" r="4"/>'
+        f'<text x="{x + 24}" y="{y + 4}">adopted as the default recipe</text>'
+    )
     if with_experiments:
         x2 = x + 24 + text_width("adopted as the default recipe") + 24
-        body.append(f'<circle class="dot2" cx="{x2 + 9}" cy="{y}" r="4"/>'
-                    f'<text x="{x2 + 22}" y="{y + 4}">experiment, not adopted</text>')
+        body.append(
+            f'<circle class="dot2" cx="{x2 + 9}" cy="{y}" r="4"/>'
+            f'<text x="{x2 + 22}" y="{y + 4}">experiment, not adopted</text>'
+        )
 
 
-def dot_chart(title, subtitle, xs_labels, points, refs=(), ylabel=None, lower_is_better=False,
-              width=760, height=380, y_range=None, cap=None):
-    body = [f'<text class="title" x="24" y="30">{escape(title)}</text>',
-            f'<text class="subtitle" x="24" y="50">{escape(subtitle)}</text>']
+def dot_chart(
+    title,
+    subtitle,
+    xs_labels,
+    points,
+    refs=(),
+    ylabel=None,
+    lower_is_better=False,
+    width=760,
+    height=380,
+    y_range=None,
+    cap=None,
+):
+    body = [
+        f'<text class="title" x="24" y="30">{escape(title)}</text>',
+        f'<text class="subtitle" x="24" y="50">{escape(subtitle)}</text>',
+    ]
     _legend(body, 24, 74, with_experiments=any(p["kind"] == "experiment" for p in points))
-    _plot(body, (72, 118, width - 72 - 24, height - 118 - 44), xs_labels, points, list(refs),
-          ylabel=ylabel, lower_is_better=lower_is_better, y_range=y_range, cap=cap)
+    _plot(
+        body,
+        (72, 118, width - 72 - 24, height - 118 - 44),
+        xs_labels,
+        points,
+        list(refs),
+        ylabel=ylabel,
+        lower_is_better=lower_is_better,
+        y_range=y_range,
+        cap=cap,
+    )
     return _svg(width, height, body)
 
 
@@ -183,20 +236,33 @@ def small_multiples(title, subtitle, panels, xs_labels, width=760, panel_height=
     top = 100
     ph = panel_height
     height = top + rows * (ph + 70) + 10
-    body = [f'<text class="title" x="24" y="30">{escape(title)}</text>',
-            f'<text class="subtitle" x="24" y="50">{escape(subtitle)}</text>']
-    _legend(body, 24, 74, with_experiments=any(p["kind"] == "experiment"
-                                               for pan in panels for p in pan["points"]))
+    body = [
+        f'<text class="title" x="24" y="30">{escape(title)}</text>',
+        f'<text class="subtitle" x="24" y="50">{escape(subtitle)}</text>',
+    ]
+    _legend(
+        body,
+        24,
+        74,
+        with_experiments=any(p["kind"] == "experiment" for pan in panels for p in pan["points"]),
+    )
     colw = (width - 24) / cols
     for i, pan in enumerate(panels):
         r, c = divmod(i, cols)
         x = 24 + c * colw
         y = top + r * (ph + 70) + 30
         body.append(f'<text class="panel" x="{x}" y="{y - 8}">{escape(pan["title"])}</text>')
-        _plot(body, (x + 48, y + 22, colw - 48 - 24, ph - 22), xs_labels, pan["points"],
-              list(pan.get("refs", ())), ylabel=pan.get("ylabel"),
-              lower_is_better=pan.get("lower_is_better", False), y_range=pan.get("y_range"),
-              cap=pan.get("cap"))
+        _plot(
+            body,
+            (x + 48, y + 22, colw - 48 - 24, ph - 22),
+            xs_labels,
+            pan["points"],
+            list(pan.get("refs", ())),
+            ylabel=pan.get("ylabel"),
+            lower_is_better=pan.get("lower_is_better", False),
+            y_range=pan.get("y_range"),
+            cap=pan.get("cap"),
+        )
     return _svg(width, height, body)
 
 
@@ -208,29 +274,39 @@ def heatmap(title, subtitle, row_labels, col_labels, cells, gap_before=None, wid
     extra = 16 if gap_before else 0
     width = width or int(left + len(col_labels) * cw + extra + 24)
     height = top + len(row_labels) * ch + 90
-    body = [f'<text class="title" x="24" y="30">{escape(title)}</text>',
-            f'<text class="subtitle" x="24" y="50">{escape(subtitle)}</text>']
+    body = [
+        f'<text class="title" x="24" y="30">{escape(title)}</text>',
+        f'<text class="subtitle" x="24" y="50">{escape(subtitle)}</text>',
+    ]
 
     def cx(j):
         return left + j * cw + (extra if gap_before and j >= col_labels.index(gap_before) else 0)
 
     for j, c in enumerate(col_labels):
-        body.append(f'<text x="{cx(j) + cw / 2:.1f}" y="{top - 8}" text-anchor="middle">{escape(c)}</text>')
+        body.append(
+            f'<text x="{cx(j) + cw / 2:.1f}" y="{top - 8}" text-anchor="middle">{escape(c)}</text>'
+        )
     for i, r in enumerate(row_labels):
         y = top + i * ch
-        body.append(f'<text x="{left - 10}" y="{y + ch / 2 + 4:.1f}" text-anchor="end">{escape(r)}</text>')
+        body.append(
+            f'<text x="{left - 10}" y="{y + ch / 2 + 4:.1f}" text-anchor="end">{escape(r)}</text>'
+        )
         for j, c in enumerate(col_labels):
             if (r, c) not in cells:
                 continue
             v, tip = cells[(r, c)]
             b = min(6, int(v * 7))  # seven sequential bins, 0-1
-            body.append(f'<rect x="{cx(j) + 1:.1f}" y="{y + 1}" width="{cw - 2}" height="{ch - 2}" rx="3" '
-                        f'fill="var(--h{b})">{_title(tip)}</rect>')
+            body.append(
+                f'<rect x="{cx(j) + 1:.1f}" y="{y + 1}" width="{cw - 2}" height="{ch - 2}" rx="3" '
+                f'fill="var(--h{b})">{_title(tip)}</rect>'
+            )
     # ramp legend
     ly = top + len(row_labels) * ch + 30
     body.append(f'<text x="{left}" y="{ly - 8}">accuracy</text>')
     for b in range(7):
-        body.append(f'<rect x="{left + b * 34}" y="{ly}" width="32" height="12" rx="2" fill="var(--h{b})"/>')
+        body.append(
+            f'<rect x="{left + b * 34}" y="{ly}" width="32" height="12" rx="2" fill="var(--h{b})"/>'
+        )
         body.append(f'<text class="tick" x="{left + b * 34}" y="{ly + 26}">{b / 7:.2f}</text>')
     body.append(f'<text class="tick" x="{left + 7 * 34}" y="{ly + 26}">1.00</text>')
     return _svg(width, height, body)
@@ -250,23 +326,33 @@ def _scatter_panel(body, box, spec, points, lineage, x_range, y_range, arrow_id)
 
     for t in yt:
         body.append(f'<line class="grid" x1="{x0}" x2="{x0 + w}" y1="{Y(t):.1f}" y2="{Y(t):.1f}"/>')
-        body.append(f'<text class="tick" x="{x0 - 6}" y="{Y(t) + 3.5:.1f}" text-anchor="end">{_fmt(t, ys)}</text>')
+        body.append(
+            f'<text class="tick" x="{x0 - 6}" y="{Y(t) + 3.5:.1f}" text-anchor="end">{_fmt(t, ys)}</text>'
+        )
     for t in xt:
         body.append(f'<line class="grid" x1="{X(t):.1f}" x2="{X(t):.1f}" y1="{y0}" y2="{y0 + h}"/>')
-        body.append(f'<text class="tick" x="{X(t):.1f}" y="{y0 + h + 16}" text-anchor="middle">{_fmt(t, xs)}</text>')
+        body.append(
+            f'<text class="tick" x="{X(t):.1f}" y="{y0 + h + 16}" text-anchor="middle">{_fmt(t, xs)}</text>'
+        )
     body.append(f'<line class="axis" x1="{x0}" x2="{x0 + w}" y1="{y0 + h}" y2="{y0 + h}"/>')
     body.append(f'<text class="panel" x="{x0 - 40}" y="{y0 - 14}">{escape(spec["title"])}</text>')
     xlabel = spec.get("xlabel", "JevBench accuracy")
-    body.append(f'<text class="muted" x="{x0 + w}" y="{y0 + h + 34}" text-anchor="end">{escape(xlabel)} &#8594;</text>')
+    body.append(
+        f'<text class="muted" x="{x0 + w}" y="{y0 + h + 34}" text-anchor="end">{escape(xlabel)} &#8594;</text>'
+    )
     better, corner = spec.get("better", ("better: right and down", "bottom"))
     by = y0 + h - 8 if corner == "bottom" else y0 + 14
-    body.append(f'<text class="muted" x="{x0 + w - 4}" y="{by}" text-anchor="end">{escape(better)}</text>')
+    body.append(
+        f'<text class="muted" x="{x0 + w - 4}" y="{by}" text-anchor="end">{escape(better)}</text>'
+    )
 
     by_id = {p["id"]: p for p in points}
     path = [by_id[i] for i in lineage if i in by_id]
     for a, b in itertools.pairwise(path):  # the lineage, one arrow per adoption
-        body.append(f'<line class="line1" x1="{X(a["x"]):.1f}" y1="{Y(a["y"]):.1f}" x2="{X(b["x"]):.1f}" '
-                    f'y2="{Y(b["y"]):.1f}" marker-end="url(#{arrow_id})"/>')
+        body.append(
+            f'<line class="line1" x1="{X(a["x"]):.1f}" y1="{Y(a["y"]):.1f}" x2="{X(b["x"]):.1f}" '
+            f'y2="{Y(b["y"]):.1f}" marker-end="url(#{arrow_id})"/>'
+        )
     order = {"experiment": 0, "reference": 1, "default": 2}  # lineage drawn on top
     for p in sorted(points, key=lambda p: order[p["kind"]]):
         cx, cy = X(p["x"]), Y(p["y"])
@@ -274,37 +360,63 @@ def _scatter_panel(body, box, spec, points, lineage, x_range, y_range, arrow_id)
             mark = f'<rect class="dot3" x="{cx - 5:.1f}" y="{cy - 5:.1f}" width="10" height="10" rx="2"/>'
         else:
             mark = f'<circle class="{"dot1" if p["kind"] == "default" else "dot2"}" cx="{cx:.1f}" cy="{cy:.1f}" r="5"/>'
-        body.append(f'<g>{_title(p["tip"])}<circle class="hit" cx="{cx:.1f}" cy="{cy:.1f}" r="11"/>{mark}</g>')
+        body.append(
+            f'<g>{_title(p["tip"])}<circle class="hit" cx="{cx:.1f}" cy="{cy:.1f}" r="11"/>{mark}</g>'
+        )
         if p.get("label"):
             dx, dy = p.get("dx", 8), p.get("dy", -8)
             anchor = "end" if dx < 0 else "middle" if dx == 0 else "start"
             if p.get("leader"):  # label set away from a crowded spot, joined by a hairline
-                body.append(f'<line class="ref" x1="{cx:.1f}" y1="{cy - 6:.1f}" x2="{cx + dx:.1f}" y2="{cy + dy + 3:.1f}"/>')
-            body.append(f'<text x="{cx + dx:.1f}" y="{cy + dy:.1f}" text-anchor="{anchor}">{escape(p["label"])}</text>')
+                body.append(
+                    f'<line class="ref" x1="{cx:.1f}" y1="{cy - 6:.1f}" x2="{cx + dx:.1f}" y2="{cy + dy + 3:.1f}"/>'
+                )
+            body.append(
+                f'<text x="{cx + dx:.1f}" y="{cy + dy:.1f}" text-anchor="{anchor}">{escape(p["label"])}</text>'
+            )
 
 
-def trajectory(title, subtitle, panels, lineage, note=None, width=980, panel_h=360,
-               ref_label="other systems, same 231 tasks"):
+def trajectory(
+    title,
+    subtitle,
+    panels,
+    lineage,
+    note=None,
+    width=980,
+    panel_h=360,
+    ref_label="other systems, same 231 tasks",
+):
     """Side-by-side accuracy-vs-error panels. panels: dicts {title, points, x_range, y_range}."""
     top = 104
     height = top + panel_h + 70 + (22 if note else 0)
-    body = [f'<text class="title" x="24" y="30">{escape(title)}</text>',
-            f'<text class="subtitle" x="24" y="50">{escape(subtitle)}</text>',
-            '<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" '
-            'orient="auto-start-reverse"><path class="arrow" d="M0,1 L10,5 L0,9 z"/></marker></defs>']
+    body = [
+        f'<text class="title" x="24" y="30">{escape(title)}</text>',
+        f'<text class="subtitle" x="24" y="50">{escape(subtitle)}</text>',
+        '<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" '
+        'orient="auto-start-reverse"><path class="arrow" d="M0,1 L10,5 L0,9 z"/></marker></defs>',
+    ]
     x = 24
     has_exp = any(p["kind"] == "experiment" for pan in panels for p in pan["points"])
     _legend(body, x, 74, with_experiments=has_exp)
     lx = x + 24 + text_width("adopted as the default recipe") + 24
     if has_exp:
         lx += 22 + text_width("experiment, not adopted") + 24
-    body.append(f'<rect class="dot3" x="{lx + 4:.1f}" y="69" width="10" height="10" rx="2"/>'
-                f'<text x="{lx + 20:.1f}" y="78">{escape(ref_label)}</text>')
+    body.append(
+        f'<rect class="dot3" x="{lx + 4:.1f}" y="69" width="10" height="10" rx="2"/>'
+        f'<text x="{lx + 20:.1f}" y="78">{escape(ref_label)}</text>'
+    )
     pw = (width - 2 * 24 - 64 * len(panels) - 24 * (len(panels) - 1)) / len(panels)
     for i, pan in enumerate(panels):
         bx = 24 + 64 + i * (pw + 64 + 24)
-        _scatter_panel(body, (bx, top + 20, pw, panel_h - 20), pan, pan["points"], lineage,
-                       pan["x_range"], pan["y_range"], "arr")
+        _scatter_panel(
+            body,
+            (bx, top + 20, pw, panel_h - 20),
+            pan,
+            pan["points"],
+            lineage,
+            pan["x_range"],
+            pan["y_range"],
+            "arr",
+        )
     if note:
         body.append(f'<text class="muted" x="24" y="{height - 14}">{escape(note)}</text>')
     return _svg(width, height, body)
@@ -329,19 +441,45 @@ def _numeric_axes(body, box, x_range, y_range, xlabel, ylabel, x_fmt, y_fmt, y_t
 
     yf = y_fmt or (lambda v: _fmt(v, ys))
     for t in yt:
-        body.append(f'<line class="grid" x1="{x0}" x2="{x0 + pw}" y1="{Y(t):.1f}" y2="{Y(t):.1f}"/>')
-        body.append(f'<text class="tick" x="{x0 - 6}" y="{Y(t) + 3.5:.1f}" text-anchor="end">{yf(t)}</text>')
-    body.append(f'<line class="axis" x1="{x0}" x2="{x0 + pw}" y1="{top + plot_h}" y2="{top + plot_h}"/>')
+        body.append(
+            f'<line class="grid" x1="{x0}" x2="{x0 + pw}" y1="{Y(t):.1f}" y2="{Y(t):.1f}"/>'
+        )
+        body.append(
+            f'<text class="tick" x="{x0 - 6}" y="{Y(t) + 3.5:.1f}" text-anchor="end">{yf(t)}</text>'
+        )
+    body.append(
+        f'<line class="axis" x1="{x0}" x2="{x0 + pw}" y1="{top + plot_h}" y2="{top + plot_h}"/>'
+    )
     for t in xt:
-        body.append(f'<text class="tick" x="{X(t):.1f}" y="{top + plot_h + 16}" text-anchor="middle">{x_fmt.format(t)}</text>')
-    body.append(f'<text class="muted" x="{x0 + pw}" y="{top + plot_h + 34}" text-anchor="end">{escape(xlabel)} &#8594;</text>')
+        body.append(
+            f'<text class="tick" x="{X(t):.1f}" y="{top + plot_h + 16}" text-anchor="middle">{x_fmt.format(t)}</text>'
+        )
+    body.append(
+        f'<text class="muted" x="{x0 + pw}" y="{top + plot_h + 34}" text-anchor="end">{escape(xlabel)} &#8594;</text>'
+    )
     body.append(f'<text class="muted" x="{x0 - 40}" y="{top - 12}">{escape(ylabel)}</text>')
     return X, Y, yf
 
 
-def line_chart(title, subtitle, series, xlabel, ylabel, x_range, y_range, notes=(), width=760,
-               plot_h=300, cap=None, markers=False, x_fmt="{:,.0f}", y_fmt=None, y_ticks=4,
-               x_ticks=None, x_name="step"):
+def line_chart(
+    title,
+    subtitle,
+    series,
+    xlabel,
+    ylabel,
+    x_range,
+    y_range,
+    notes=(),
+    width=760,
+    plot_h=300,
+    cap=None,
+    markers=False,
+    x_fmt="{:,.0f}",
+    y_fmt=None,
+    y_ticks=4,
+    x_ticks=None,
+    x_name="step",
+):
     """Lines over a numeric x axis (e.g. training step).
 
     series: dicts {label, end_label, cls ('0'-'3'), points [(x, y)]}. Two or more series get a
@@ -356,16 +494,31 @@ def line_chart(title, subtitle, series, xlabel, ylabel, x_range, y_range, notes=
     end_space = max((text_width(s["end_label"]) for s in series), default=0) + 20 if multi else 24
     pw = width - x0 - end_space
     height = top + plot_h + 44 + 18 * len(notes) + 10
-    body = [f'<text class="title" x="24" y="30">{escape(title)}</text>',
-            f'<text class="subtitle" x="24" y="50">{escape(subtitle)}</text>']
+    body = [
+        f'<text class="title" x="24" y="30">{escape(title)}</text>',
+        f'<text class="subtitle" x="24" y="50">{escape(subtitle)}</text>',
+    ]
     if multi:  # legend, in series order
         lx = 24
         for s in series:
-            body.append(f'<line class="line{s["cls"]}" x1="{lx}" x2="{lx + 18}" y1="74" y2="74"/>'
-                        f'<text x="{lx + 24}" y="78">{escape(s["label"])}</text>')
+            body.append(
+                f'<line class="line{s["cls"]}" x1="{lx}" x2="{lx + 18}" y1="74" y2="74"/>'
+                f'<text x="{lx + 24}" y="78">{escape(s["label"])}</text>'
+            )
             lx += 24 + text_width(s["label"]) + 22
-    X, Y, yf = _numeric_axes(body, (x0, top, pw, plot_h), x_range, y_range, xlabel, ylabel,
-                             x_fmt, y_fmt, y_ticks, cap, x_ticks)
+    X, Y, yf = _numeric_axes(
+        body,
+        (x0, top, pw, plot_h),
+        x_range,
+        y_range,
+        xlabel,
+        ylabel,
+        x_fmt,
+        y_fmt,
+        y_ticks,
+        cap,
+        x_ticks,
+    )
 
     # hover strips, drawn under the lines
     xs = sorted({x for s in series for x, _ in s["points"]})
@@ -373,19 +526,28 @@ def line_chart(title, subtitle, series, xlabel, ylabel, x_range, y_range, notes=
     for i, x in enumerate(xs):
         left = X((xs[i - 1] + x) / 2) if i else X(x) - 4
         right = X((x + xs[i + 1]) / 2) if i + 1 < len(xs) else X(x) + 4
-        vals = "; ".join(f"{s['label']} {yf(a[x]) if y_fmt else f'{a[x]:.3f}'}"
-                         for s, a in zip(series, at, strict=True) if x in a)
-        body.append(f'<rect class="strip" x="{left:.1f}" y="{top}" width="{right - left:.1f}" height="{plot_h}">'
-                    f'{_title(f"{x_name} {x_fmt.format(x)}: {vals}")}</rect>')
+        vals = "; ".join(
+            f"{s['label']} {yf(a[x]) if y_fmt else f'{a[x]:.3f}'}"
+            for s, a in zip(series, at, strict=True)
+            if x in a
+        )
+        body.append(
+            f'<rect class="strip" x="{left:.1f}" y="{top}" width="{right - left:.1f}" height="{plot_h}">'
+            f"{_title(f'{x_name} {x_fmt.format(x)}: {vals}')}</rect>"
+        )
 
     for s in reversed(series):  # the first series is drawn last, on top
-        d = " ".join(f"{'M' if i == 0 else 'L'}{X(x):.1f},{Y(y):.1f}" for i, (x, y) in enumerate(s["points"]))
+        d = " ".join(
+            f"{'M' if i == 0 else 'L'}{X(x):.1f},{Y(y):.1f}" for i, (x, y) in enumerate(s["points"])
+        )
         body.append(f'<path class="line{s["cls"]}" d="{d}" pointer-events="none"/>')
         if markers:
             for x, y in s["points"]:
                 tip = f"{x_name} {x_fmt.format(x)}: {s['label']} {yf(y) if y_fmt else f'{y:.3f}'}"
-                body.append(f'<g>{_title(tip)}<circle class="hit" cx="{X(x):.1f}" cy="{Y(y):.1f}" r="11"/>'
-                            f'<circle class="dot{s["cls"]}" cx="{X(x):.1f}" cy="{Y(y):.1f}" r="4"/></g>')
+                body.append(
+                    f'<g>{_title(tip)}<circle class="hit" cx="{X(x):.1f}" cy="{Y(y):.1f}" r="11"/>'
+                    f'<circle class="dot{s["cls"]}" cx="{X(x):.1f}" cy="{Y(y):.1f}" r="4"/></g>'
+                )
 
     if multi:  # direct labels at each line's end, spread to a 12px minimum gap
         ends = sorted(((Y(s["points"][-1][1]), s) for s in series), key=lambda t: t[0])
@@ -393,18 +555,39 @@ def line_chart(title, subtitle, series, xlabel, ylabel, x_range, y_range, notes=
         for y, _ in ends:
             placed.append(max(y, placed[-1] + 12) if placed else y)
         for (_, s), ly in zip(ends, placed, strict=True):
-            body.append(f'<text x="{X(s["points"][-1][0]) + 6:.1f}" y="{ly + 3.5:.1f}">{escape(s["end_label"])}</text>')
+            body.append(
+                f'<text x="{X(s["points"][-1][0]) + 6:.1f}" y="{ly + 3.5:.1f}">{escape(s["end_label"])}</text>'
+            )
     elif series:  # one series: label its last value
         x, y = series[0]["points"][-1]
-        body.append(f'<text class="value" x="{X(x):.1f}" y="{Y(y) - 10:.1f}" text-anchor="end">'
-                    f'{yf(y) if y_fmt else f"{y:.3f}"}</text>')
+        body.append(
+            f'<text class="value" x="{X(x):.1f}" y="{Y(y) - 10:.1f}" text-anchor="end">'
+            f"{yf(y) if y_fmt else f'{y:.3f}'}</text>"
+        )
     for i, n in enumerate(notes):
-        body.append(f'<text class="muted" x="24" y="{top + plot_h + 60 + 18 * i}">{escape(n)}</text>')
+        body.append(
+            f'<text class="muted" x="24" y="{top + plot_h + 60 + 18 * i}">{escape(n)}</text>'
+        )
     return _svg(width, height, body)
 
 
-def scatter_chart(title, subtitle, points, xlabel, ylabel, x_range, y_range, refs=(), notes=(),
-                  width=760, plot_h=300, x_fmt="{:,.0f}", y_fmt=None, y_ticks=4, x_ticks=None):
+def scatter_chart(
+    title,
+    subtitle,
+    points,
+    xlabel,
+    ylabel,
+    x_range,
+    y_range,
+    refs=(),
+    notes=(),
+    width=760,
+    plot_h=300,
+    x_fmt="{:,.0f}",
+    y_fmt=None,
+    y_ticks=4,
+    x_ticks=None,
+):
     """One series of points over numeric axes, with optional horizontal reference rules.
 
     points: dicts {x, y, tip}. refs: (label, value) rules, labelled at the right edge and
@@ -415,21 +598,40 @@ def scatter_chart(title, subtitle, points, xlabel, ylabel, x_range, y_range, ref
     ref_space = max((text_width(lbl) for lbl, _ in refs), default=0) + (16 if refs else 0)
     pw = width - x0 - 24 - ref_space
     height = top + plot_h + 44 + 18 * len(notes) + 10
-    body = [f'<text class="title" x="24" y="30">{escape(title)}</text>',
-            f'<text class="subtitle" x="24" y="50">{escape(subtitle)}</text>']
-    X, Y, yf = _numeric_axes(body, (x0, top, pw, plot_h), x_range, y_range, xlabel, ylabel,
-                             x_fmt, y_fmt, y_ticks, None, x_ticks)
+    body = [
+        f'<text class="title" x="24" y="30">{escape(title)}</text>',
+        f'<text class="subtitle" x="24" y="50">{escape(subtitle)}</text>',
+    ]
+    X, Y, yf = _numeric_axes(
+        body,
+        (x0, top, pw, plot_h),
+        x_range,
+        y_range,
+        xlabel,
+        ylabel,
+        x_fmt,
+        y_fmt,
+        y_ticks,
+        None,
+        x_ticks,
+    )
     for p in points:
-        body.append(f'<g>{_title(p["tip"])}<circle class="hit" cx="{X(p["x"]):.1f}" cy="{Y(p["y"]):.1f}" r="6"/>'
-                    f'<circle class="dot1s" cx="{X(p["x"]):.1f}" cy="{Y(p["y"]):.1f}" r="3.5"/></g>')
+        body.append(
+            f'<g>{_title(p["tip"])}<circle class="hit" cx="{X(p["x"]):.1f}" cy="{Y(p["y"]):.1f}" r="6"/>'
+            f'<circle class="dot1s" cx="{X(p["x"]):.1f}" cy="{Y(p["y"]):.1f}" r="3.5"/></g>'
+        )
     placed = sorted(((Y(v), lbl, v) for lbl, v in refs), key=lambda t: t[0])
     label_y = []
     for y, _, _ in placed:
         label_y.append(max(y, label_y[-1] + 12) if label_y else y)
     for (y, lbl, v), ly in zip(placed, label_y, strict=True):
-        body.append(f'<g>{_title(f"{lbl}: {yf(v)}")}'
-                    f'<line class="ref" x1="{x0}" x2="{x0 + pw}" y1="{y:.1f}" y2="{y:.1f}" stroke-dasharray="4 3"/>'
-                    f'<text x="{x0 + pw + 6}" y="{ly + 3.5:.1f}">{escape(lbl)}</text></g>')
+        body.append(
+            f"<g>{_title(f'{lbl}: {yf(v)}')}"
+            f'<line class="ref" x1="{x0}" x2="{x0 + pw}" y1="{y:.1f}" y2="{y:.1f}" stroke-dasharray="4 3"/>'
+            f'<text x="{x0 + pw + 6}" y="{ly + 3.5:.1f}">{escape(lbl)}</text></g>'
+        )
     for i, n in enumerate(notes):
-        body.append(f'<text class="muted" x="24" y="{top + plot_h + 60 + 18 * i}">{escape(n)}</text>')
+        body.append(
+            f'<text class="muted" x="24" y="{top + plot_h + 60 + 18 * i}">{escape(n)}</text>'
+        )
     return _svg(width, height, body)

@@ -129,7 +129,9 @@ def chunk_gated_delta_rule_mps(
 
     upper = torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device).triu(1)
     cum_decay = decay.cumsum(dim=3)
-    pairwise = (cum_decay.unsqueeze(4) - cum_decay.unsqueeze(3)).masked_fill(upper, float("-inf")).exp()
+    pairwise = (
+        (cum_decay.unsqueeze(4) - cum_decay.unsqueeze(3)).masked_fill(upper, float("-inf")).exp()
+    )
 
     ut_system = (k_beta @ key.transpose(-1, -2)) * pairwise
     intra_chunk_attn = (query @ key.transpose(-1, -2)) * pairwise
@@ -183,8 +185,9 @@ def install() -> bool:
         return False
     current = q.torch_chunk_gated_delta_rule
 
-    def dispatch(query: torch.Tensor, *args: Any,
-                 **kwargs: Any) -> tuple[torch.Tensor, torch.Tensor | None]:
+    def dispatch(
+        query: torch.Tensor, *args: Any, **kwargs: Any
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         if query.device.type == "mps":
             return chunk_gated_delta_rule_mps(query, *args, **kwargs)
         return current(query, *args, **kwargs)  # type: ignore[no-any-return]

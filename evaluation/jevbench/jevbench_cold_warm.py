@@ -80,22 +80,30 @@ def split(doubled: str, results: str, outdir: str) -> None:
 
     # The very first request of the run also warms up the server itself.
     first = min(cold, key=lambda r: r["ts"])["task_id"]
-    pairs = [(c["latency_s"] * 1000, w["latency_s"] * 1000, c["usage"]["input_tokens"])
-             for c, w in zip(cold, warm, strict=True) if c["task_id"] != first]
+    pairs = [
+        (c["latency_s"] * 1000, w["latency_s"] * 1000, c["usage"]["input_tokens"])
+        for c, w in zip(cold, warm, strict=True)
+        if c["task_id"] != first
+    ]
     same = sum(c["predicted"] == w["predicted"] for c, w in zip(cold, warm, strict=True))
     print(f"{len(cold)} tasks; same prediction on both passes: {same}/{len(cold)}")
     print(f"(excluding the run's first request, {first})")
     print(f"{'':12s} {'p50':>8s} {'p95':>8s} {'mean':>8s}   ms")
-    for name, xs in (("cold", [p[0] for p in pairs]), ("warm", [p[1] for p in pairs]),
-                     ("cold - warm", [p[0] - p[1] for p in pairs])):
-        print(f"{name:12s} {_pct(xs, .5):8.0f} {_pct(xs, .95):8.0f} {statistics.mean(xs):8.0f}")
+    for name, xs in (
+        ("cold", [p[0] for p in pairs]),
+        ("warm", [p[1] for p in pairs]),
+        ("cold - warm", [p[0] - p[1] for p in pairs]),
+    ):
+        print(f"{name:12s} {_pct(xs, 0.5):8.0f} {_pct(xs, 0.95):8.0f} {statistics.mean(xs):8.0f}")
     print(f"\n{'tokens':>11s} {'n':>4s} {'cold p50':>9s} {'warm p50':>9s} {'extra p50':>10s}")
     for lo, hi in ((0, 300), (300, 1000), (1000, 2500), (2500, 5000)):
         band = [p for p in pairs if lo <= p[2] < hi]
         if band:
-            print(f"{lo:>5d}-{hi:<5d} {len(band):4d} {_pct([p[0] for p in band], .5):9.0f}"
-                  f" {_pct([p[1] for p in band], .5):9.0f}"
-                  f" {_pct([p[0] - p[1] for p in band], .5):10.0f}")
+            print(
+                f"{lo:>5d}-{hi:<5d} {len(band):4d} {_pct([p[0] for p in band], 0.5):9.0f}"
+                f" {_pct([p[1] for p in band], 0.5):9.0f}"
+                f" {_pct([p[0] - p[1] for p in band], 0.5):10.0f}"
+            )
 
 
 def main(argv) -> int:

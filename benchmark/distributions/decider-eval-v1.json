@@ -1,0 +1,45 @@
+{
+  "name": "decider-eval-v1",
+  "description": "Request token-length distribution derived from the decider eval sets.",
+  "built_from": [
+    "/Users/ncclegg/conductor/workspaces/strands-decider-v1/dushanbe/data/synthetic/adequacy_gen_eval.jsonl",
+    "/Users/ncclegg/conductor/workspaces/strands-decider-v1/dushanbe/data/synthetic/flips_v20_eval.jsonl",
+    "/Users/ncclegg/conductor/workspaces/strands-decider-v1/dushanbe/data/synthetic/generated_v16_eval.jsonl",
+    "/Users/ncclegg/conductor/workspaces/strands-decider-v1/dushanbe/data/synthetic/generated_v18_eval.jsonl"
+  ],
+  "sources_sha256": "e0163fdb1610dfd1c04bdf2844c4e7cbd851354df318be8ee03ab697cf9ea3df",
+  "tokenizer": "Qwen/Qwen2.5-3B",
+  "records": 1019,
+  "percentiles": {
+    "p50": 1448,
+    "p90": 1842,
+    "p99": 2129,
+    "max": 2283
+  },
+  "buckets": [
+    {
+      "tokens": 256,
+      "weight": 0.092247
+    },
+    {
+      "tokens": 512,
+      "weight": 0.316977
+    },
+    {
+      "tokens": 1024,
+      "weight": 0.003925
+    },
+    {
+      "tokens": 2048,
+      "weight": 0.562316
+    },
+    {
+      "tokens": 4096,
+      "weight": 0.024534
+    },
+    {
+      "tokens": 8192,
+      "weight": 0.0
+    }
+  ]
+}

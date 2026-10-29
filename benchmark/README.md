@@ -1,5 +1,9 @@
 # Inference performance benchmarks
 
+> Agents: load [`skills/benchmark-decider/SKILL.md`](../skills/benchmark-decider/SKILL.md) before
+> configuring, running, or interpreting this suite. It covers pitfalls, analysis, and the AWS
+> workflow in addition to this README.
+
 This suite measures how an inference-server change affects the configured models in one compute
 environment. It does not rank different environments and does not evaluate model correctness.
 
@@ -8,13 +12,14 @@ synthetic request shape and calling pattern:
 
 - a serial latency sweep using input-length targets of 256, 1,024, 2,048, and 4,096 tokens per
   request, calibrated against the server-reported token count;
-- a throughput sweep using only 1,024-token requests;
+- a throughput sweep whose input length is set by `--throughput-input-length` (default 1,024);
 - four choice questions per request, with four options each;
 - an equal-weight mixture of the four input lengths in the latency sweep;
 - 50% repeated states and 50% unique states;
 - fixed, balanced request batches at each closed-loop concurrency level.
 
-Poisson traffic, short bursts, and long soak tests are intentionally deferred.
+An open-loop `prod-sim` subcommand runs a Poisson-arrival RPS ramp with mixed input lengths
+sampled from a prebuilt distribution. See the Prod-sim section below.
 
 ## Headline results
 
@@ -159,6 +164,13 @@ Pass a model to run only that model:
 python -m benchmark.runner run local MODEL
 ```
 
+Override the throughput sweep's input length to probe shorter or longer requests. The resulting
+run becomes a separate baseline (the length is part of the baseline-compatibility fingerprint):
+
+```bash
+python -m benchmark.runner run local MODEL --throughput-input-length 256
+```
+
 Later standard runs write each model’s latest candidate under its model directory. Compare and
 optionally accept one candidate:
 
@@ -187,6 +199,48 @@ beneath it. Smoke runs require a model.
 
 When `--output` already exists, the runner replaces its benchmark artifacts after the new run
 finishes successfully. Unrelated files in the directory are left untouched.
+
+## Prod-sim: open-loop ramp
+
+`prod-sim` is a diagnostic workload: Poisson arrivals at a sequence of target RPS levels, with
+input lengths sampled from a prebuilt distribution. Use it to find where the server starts to
+breach a p99 latency SLO under prod-like traffic.
+
+```bash
+python -m benchmark.runner prod-sim ENVIRONMENT [MODEL] \
+  [--distribution benchmark/distributions/decider-eval-v1.json] \
+  [--rps-steps 1,2,4,8,16,32,64] \
+  [--step-seconds 30] \
+  [--slo-p99-ms 2000]
+```
+
+Results land at `benchmark/environments/<env>/runs/<model-slug>/prod-sim/` with a `manifest.json`,
+`summary.json`, `summary.csv`, `prod-sim-latency-vs-rps.png`, and `prod-sim-failures-vs-rps.png`.
+Prod-sim does not participate in the baseline/compare flow; each run stands on its own.
+
+The ramp stops at the first step that breaches the SLO (`p99 > --slo-p99-ms`), exceeds the 1%
+failure budget, or saturates the client's in-flight cap. The headline is `peak_rps_within_slo` —
+the highest step that stayed under the SLO.
+
+Set the SLO per environment with `prod_sim.slo_p99_ms` in `environment.yaml`, or override it on
+the CLI with `--slo-p99-ms`.
+
+### Length distribution
+
+`benchmark/distributions/decider-eval-v1.json` is a token-length histogram built from the
+project's eval sets. Each prod-sim request's target length is sampled from these buckets, and the
+synthetic workload calibrates its state size to hit that length on the server's tokenizer.
+
+Rebuild the distribution after the eval data changes:
+
+```bash
+PYTHONPATH=src python benchmark/scripts/build_distribution.py \
+  --source data/synthetic/adequacy_gen_eval.jsonl \
+  --source data/synthetic/flips_v20_eval.jsonl \
+  --source data/synthetic/generated_v16_eval.jsonl \
+  --source data/synthetic/generated_v18_eval.jsonl \
+  --output benchmark/distributions/decider-eval-v1.json
+```
 
 ## Artifacts and graphs
 

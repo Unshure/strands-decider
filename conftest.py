@@ -18,7 +18,10 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 @pytest.fixture(autouse=True)
 def _deterministic():
-    import torch
-
+    try:
+        import torch
+    except ImportError:
+        yield
+        return
     torch.manual_seed(0)
     yield

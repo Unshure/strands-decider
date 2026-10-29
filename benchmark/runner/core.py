@@ -24,7 +24,7 @@ from botocore.exceptions import BotoCoreError, ClientError, ConnectTimeoutError,
 from transformers import AutoTokenizer
 
 from benchmark.runner.config import Environment
-from benchmark.runner.workload import Request, Shape, Workload
+from benchmark.runner.workload import DEFAULT_THROUGHPUT_INPUT_TOKENS, Request, Shape, Workload
 
 
 def percentile(values: list[float], q: float) -> float | None:
@@ -451,6 +451,7 @@ class BenchmarkRunner:
         repetitions: int,
         concurrency_levels: list[int],
         seed: int,
+        throughput_input_tokens: int = DEFAULT_THROUGHPUT_INPUT_TOKENS,
         progress: Callable[[str], None] = print,
         advance: Callable[[int], None] | None = None,
     ):
@@ -463,6 +464,9 @@ class BenchmarkRunner:
             raise ValueError("concurrency levels must be positive")
         if requests_per_point % 8:
             raise ValueError("requests per point must be divisible by the 8-request workload cycle")
+        if throughput_input_tokens <= 0:
+            raise ValueError("throughput_input_tokens must be positive")
+        self.throughput_input_tokens = throughput_input_tokens
         self.seed = seed
         self.progress = progress
         self.advance = advance or (lambda _: None)
@@ -642,7 +646,11 @@ class BenchmarkRunner:
                     )
             tokenizer_id = health.get("checkpoint") or self.model
             tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
-            self.workload = Workload(tokenizer, self.seed)
+            self.workload = Workload(
+                tokenizer,
+                self.seed,
+                throughput_tokens=self.throughput_input_tokens,
+            )
             self.progress("calibrating input lengths against server-reported tokens")
             self.workload.calibrate(self._measure_input_tokens)
 
@@ -692,6 +700,7 @@ class BenchmarkRunner:
                     "concurrency": saturation["load"],
                     "requests_per_second": saturation["requests_per_second"],
                 },
+                "throughput_input_tokens": self.throughput_input_tokens,
                 "latency_sweep": latency_sweep,
                 "closed_loop": closed,
                 "health": health,

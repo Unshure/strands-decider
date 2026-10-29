@@ -12,7 +12,7 @@ from strands_decider.prompting import render_question, render_state
 from strands_decider.schema import ChoiceQuestion
 
 INPUT_LENGTHS = (256, 1024, 2048, 4096)
-THROUGHPUT_INPUT_TOKENS = 1024
+DEFAULT_THROUGHPUT_INPUT_TOKENS = 1024
 QUESTIONS_PER_REQUEST = 4
 OPTIONS = {
     "alpha": "first",
@@ -55,15 +55,26 @@ class Workload:
     rendered token length.
     """
 
-    def __init__(self, tokenizer: Any, seed: int = 0):
+    def __init__(
+        self,
+        tokenizer: Any,
+        seed: int = 0,
+        *,
+        throughput_tokens: int = DEFAULT_THROUGHPUT_INPUT_TOKENS,
+        extra_targets: tuple[int, ...] = (),
+    ):
+        if throughput_tokens <= 0:
+            raise ValueError("throughput_tokens must be positive")
         self.tokenizer = tokenizer
         self.seed = seed
+        self.throughput_tokens = throughput_tokens
         self.shapes = [Shape(tokens) for tokens in INPUT_LENGTHS]
         self._cycle = [(shape, repeated) for shape in self.shapes for repeated in (True, False)]
         random.Random(seed).shuffle(self._cycle)
+        self._all_targets = tuple(sorted({*INPUT_LENGTHS, throughput_tokens, *extra_targets}))
         self._state_chars: dict[int, int] = {}
         self._token_ranges: dict[int, tuple[int, int]] = {}
-        for tokens in INPUT_LENGTHS:
+        for tokens in self._all_targets:
             self._state_chars[tokens] = self._calibrate_state_chars(tokens)
             measured = [
                 self._rendered_tokens(self._state(self._state_chars[tokens], identifier))
@@ -155,7 +166,7 @@ class Workload:
             raise ValueError("server refused the minimal synthetic request during calibration")
 
         ratio: float | None = None
-        for target in INPUT_LENGTHS:
+        for target in self._all_targets:
             if target <= base:
                 self._state_chars[target] = 0
                 self._token_ranges[target] = (base, base)
@@ -218,7 +229,7 @@ class Workload:
         return requests
 
     def throughput_requests(self, count: int, sequence: int = 0) -> list[Request]:
-        shape = Shape(THROUGHPUT_INPUT_TOKENS)
+        shape = Shape(self.throughput_tokens)
         return [
             self.request(
                 shape,
@@ -227,6 +238,12 @@ class Workload:
             )
             for index in range(count)
         ]
+
+    def scheduled_request(self, tokens: int, *, sequence: int, repeated: bool) -> Request:
+        """Request for an arbitrary pre-calibrated target length (prod-sim)."""
+        if tokens not in self._state_chars:
+            raise KeyError(f"target length {tokens} was not calibrated")
+        return self.request(Shape(tokens), repeated=repeated, sequence=sequence)
 
     def latency_warmups(self, sequence: int = 0) -> list[Request]:
         return [
@@ -237,7 +254,8 @@ class Workload:
     def manifest(self) -> dict[str, Any]:
         return {
             "input_length_targets": list(INPUT_LENGTHS),
-            "throughput_input_tokens": THROUGHPUT_INPUT_TOKENS,
+            "calibrated_targets": list(self._all_targets),
+            "throughput_input_tokens": self.throughput_tokens,
             "questions_per_request": QUESTIONS_PER_REQUEST,
             "question_type": "choice",
             "options_per_question": 4,

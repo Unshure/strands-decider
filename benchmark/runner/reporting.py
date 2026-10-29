@@ -114,12 +114,15 @@ def write_plots(
     fig, ax = plt.subplots(figsize=(7, 4.5))
     plotted = False
     concurrency_ticks: set[int] = set()
+    throughput_tokens: set[int] = set()
     for model, summary in summaries.items():
         closed = sorted(summary.get("closed_loop", []), key=lambda point: int(point["load"]))
         if not closed:
             continue
         concurrency = [int(point["load"]) for point in closed]
         concurrency_ticks.update(concurrency)
+        if summary.get("throughput_input_tokens") is not None:
+            throughput_tokens.add(int(summary["throughput_input_tokens"]))
         ax.plot(
             concurrency,
             [point["requests_per_second"] for point in closed],
@@ -133,7 +136,12 @@ def write_plots(
         ax.set_xscale("log", base=2)
         ticks = sorted(concurrency_ticks)
         ax.set_xticks(ticks, ticks)
-        ax.set_title("Throughput by concurrency\nInput tokens: 1024 · 4 choices per request")
+        tokens_label = (
+            str(next(iter(throughput_tokens))) if len(throughput_tokens) == 1 else "mixed"
+        )
+        ax.set_title(
+            f"Throughput by concurrency\nInput tokens: {tokens_label} · 4 choices per request"
+        )
         if len(summaries) > 1:
             ax.legend(fontsize=8)
         ax.grid(alpha=0.25)

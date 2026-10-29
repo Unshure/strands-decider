@@ -894,7 +894,7 @@ class SystemOneEngine:
         assert all(pr is not None for pr in prefixes)
         try:
             probs, _ = self._shared_prefix_batched(
-                [pr for pr in prefixes if pr is not None],  # type: ignore[list-item]
+                [pr for pr in prefixes if pr is not None],
                 [p.rendered for p in group],
             )
         except UnforkableCache as e:
